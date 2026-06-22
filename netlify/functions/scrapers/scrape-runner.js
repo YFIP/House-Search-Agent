@@ -26,7 +26,22 @@ async function scrapeSource(sourceName) {
 
   let browser;
   try {
-    browser = await puppeteer.connect({ browserWSEndpoint: CDP_URL });
+    // DIAGNOSTIC: confirm the URL's basic shape without logging the actual
+    // secret value. A correct CDP URL should start with "wss://" and
+    // contain no literal quote characters, leading/trailing whitespace,
+    // or line breaks — all common results of a copy/paste mistake when
+    // setting the Netlify environment variable.
+    const urlDiagnostic = {
+      length: CDP_URL.length,
+      startsWithWss: CDP_URL.startsWith('wss://'),
+      hasLeadingOrTrailingWhitespace: CDP_URL !== CDP_URL.trim(),
+      containsQuoteChar: CDP_URL.includes('"') || CDP_URL.includes("'"),
+      containsNewline: CDP_URL.includes('\n') || CDP_URL.includes('\r'),
+      containsApiKeyParam: CDP_URL.includes('api-key='),
+    };
+    console.log('CDP_URL diagnostic:', JSON.stringify(urlDiagnostic));
+
+    browser = await puppeteer.connect({ browserWSEndpoint: CDP_URL.trim() });
   } catch (err) {
     return { source: sourceName, listings: [], error: `Could not connect to headless browser: ${err.message}` };
   }
