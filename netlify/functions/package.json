@@ -1,8 +1,0 @@
-{
-  "name": "prospector-functions",
-  "version": "1.0.0",
-  "description": "Netlify functions for Prospector — includes Catalyst SmartBrowz scraping support.",
-  "dependencies": {
-    "puppeteer-core": "^23.0.0"
-  }
-}
