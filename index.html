@@ -666,39 +666,24 @@ async function runSearch(ref){
   if(!ref) lastFilters = f;
 
   if(!f.sources.length){ alert('Select at least one source.'); busy=false; goToCriteria(); return; }
-  // Each source typically costs 1-3 web searches, and each search consumes
-  // roughly 500-1500 tokens of the response budget before any JSON is written.
-  // Beyond ~12 sources in one request, even a generous max_tokens budget risks
-  // truncation. Keep searches reliable rather than letting people select all
-  // 40+ sources and silently get a cut-off response.
-  const MAX_SOURCES_PER_SEARCH = 12;
-  if(!ref && f.sources.length > MAX_SOURCES_PER_SEARCH){
-    alert(`You've selected ${f.sources.length} sources. To keep results reliable, please select ${MAX_SOURCES_PER_SEARCH} or fewer per search — run additional searches for the rest.`);
-    busy=false; goToCriteria(); return;
-  }
 
   const rBtn = document.getElementById('rBtn');
   rBtn.disabled = true;
   rBtn.innerHTML = `<svg viewBox="0 0 14 14" style="width:13px;height:13px;fill:none;stroke:var(--fb);stroke-width:2;animation:spin 1s linear infinite"><path d="M12 7A5 5 0 112 7" stroke-linecap="round"/><path d="M12 4v3h-3" stroke-linecap="round" stroke-linejoin="round"/></svg> Refreshing…`;
 
   document.getElementById('resTitle').textContent = ref ? 'Refreshing…' : 'Searching live listings…';
-  document.getElementById('resSub').textContent = `Running real web searches across ${f.sources.length} source${f.sources.length!==1?'s':''} — this can take 20-40 seconds`;
+  document.getElementById('resSub').textContent = `Running real web searches across ${f.sources.length} source${f.sources.length!==1?'s':''} — this can take 10-20 seconds`;
   document.getElementById('aip').style.display = 'none';
   document.getElementById('content').innerHTML = `<div class="skel-g">${Array(6).fill('<div class="skel"></div>').join('')}</div>`;
   renderFilterSummaryBar(f);
 
   try{
-    const res = await fetch('/.netlify/functions/search', {
+    const res = await fetch('https://00gixdjmf8.execute-api.eu-west-1.amazonaws.com/Prod/search', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({
         messages:[{role:'user',content:buildPrompt(f,ref)}],
-        maxSearches: Math.max(f.sources.length, 1),
-        // Sent separately from the prompt text so the backend can route
-        // sources with a real scraper (see scrapers/source-config.js) to
-        // Catalyst headless browsing instead of AI web search, while
-        // everything else still goes through web_search as before.
-        sources: f.sources
+        maxSearches: Math.max(f.sources.length, 1)
       })
     });
     const data = await res.json();
@@ -707,28 +692,31 @@ async function runSearch(ref){
       throw new Error(data.error.message || data.error);
     }
 
-    // search.js now does all the JSON-extraction and AI-response-parsing
-    // work itself (it has to, since it merges real scraped listings with
-    // AI-searched ones before responding). The front-end just renders
-    // whatever comes back in prospectorResult.
-    if(!data.prospectorResult){
-      throw new Error('The server response was missing the expected result data.');
+    // With web search enabled, content is an array of mixed block types:
+    // server_tool_use, web_search_tool_result, and text. We only want the
+    // final text block(s), which contain Claude's structured JSON answer.
+    const textBlocks = (data.content || [])
+      .filter(block => block.type === 'text')
+      .map(block => block.text)
+      .join('\n');
+
+    if(!textBlocks.trim()){
+      throw new Error('No text response received — the model may have only returned search activity.');
     }
-    render(data.prospectorResult, f, ref);
+
+    const cleaned = textBlocks.replace(/```json|```/g,'').trim();
+    // Claude sometimes adds a sentence before the JSON despite instructions not to.
+    // Extract just the JSON object: from the first { to the matching last }.
+    const firstBrace = cleaned.indexOf('{');
+    const lastBrace = cleaned.lastIndexOf('}');
+    if(firstBrace === -1 || lastBrace === -1 || lastBrace < firstBrace){
+      throw new Error('The response did not contain a recognizable JSON result.');
+    }
+    const jsonSlice = cleaned.slice(firstBrace, lastBrace + 1);
+    const result = JSON.parse(jsonSlice);
+    render(result, f, ref);
   }catch(e){
-    // "The string did not match the expected pattern" is the browser's
-    // own JSON-parsing error when a response gets cut off mid-stream —
-    // confirmed this session, more than once, to be a transient Catalyst
-    // headless-browser blip (the single shared browser session occasionally
-    // takes a moment too long), not a real code bug. Retrying the exact
-    // same search has resolved it every time it's happened so far. Surface
-    // that directly instead of leaving people to guess what a cryptic
-    // browser error means.
-    const isTransientPattern = e.message && e.message.includes('did not match the expected pattern');
-    const friendlyMessage = isTransientPattern
-      ? 'This usually clears up on its own — click "Refresh" above to try the same search again.'
-      : (e.message || 'Could not complete the search. Check your connection and try again.');
-    document.getElementById('content').innerHTML = `<div class="state"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="16"/><path d="M20 12v10M20 26v2" stroke-linecap="round"/></svg><h3>Search failed</h3><p>${friendlyMessage}</p></div>`;
+    document.getElementById('content').innerHTML = `<div class="state"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="16"/><path d="M20 12v10M20 26v2" stroke-linecap="round"/></svg><h3>Search failed</h3><p>${e.message ? e.message : 'Could not complete the search. Check your connection and try again.'}</p></div>`;
     document.getElementById('resTitle').textContent = 'Search error';
   }
 
@@ -760,23 +748,13 @@ function render(result, f, ref){
   document.getElementById('aiptxt').textContent = result.reasoning || '';
   document.getElementById('aip').style.display = 'block';
 
-  const rawListings = result.listings || [];
-  // The prompt tells Claude what the client wants, but nothing enforces that the
-  // returned listings actually satisfy those numbers — an LLM can mis-apply a
-  // budget or room count even while trying to follow instructions. Re-check every
-  // hard criterion here in code, where a number is a number, before showing anyone
-  // a listing that doesn't actually match what they asked for.
-  const { kept: ls, dropped } = applyHardFilters(rawListings, f);
+  const ls = result.listings || [];
   const now = new Date();
   document.getElementById('resTitle').textContent = `${ls.length} agency listing${ls.length!==1?'s':''} found`;
-  const droppedNote = dropped.length ? ` · ${dropped.length} result${dropped.length!==1?'s':''} excluded (didn't actually meet your criteria)` : '';
-  document.getElementById('resSub').textContent = `Last updated ${now.toLocaleDateString('fr-FR',{day:'numeric',month:'long'})} at ${now.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}${droppedNote}`;
+  document.getElementById('resSub').textContent = `Last updated ${now.toLocaleDateString('fr-FR',{day:'numeric',month:'long'})} at ${now.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}`;
 
   if(!ls.length){
-    const reason = dropped.length
-      ? `The AI found ${dropped.length} result${dropped.length!==1?'s':''}, but none actually met all your criteria once checked. Try relaxing one or two filters.`
-      : `No agency listings matched all criteria. Try relaxing one or two filters.`;
-    document.getElementById('content').innerHTML = `<div class="state"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="16"/><path d="M14 26L26 14M14 14L26 26" stroke-linecap="round"/></svg><h3>No matches found</h3><p>${reason}</p></div>`;
+    document.getElementById('content').innerHTML = `<div class="state"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="16"/><path d="M14 26L26 14M14 14L26 26" stroke-linecap="round"/></svg><h3>No matches found</h3><p>No agency listings matched all criteria. Try relaxing one or two filters.</p></div>`;
     return;
   }
 
@@ -816,66 +794,6 @@ function render(result, f, ref){
     </div>`;
   }).join('')}</div>`;
 }
-
-// ══════════════════ HARD FILTER ENFORCEMENT ══════════════════
-// Re-checks every numeric/boolean criterion in code rather than trusting the AI's
-// own application of the filters. Only enforces criteria the person actually set
-// (null/unset criteria are skipped, not treated as a strict requirement). A field
-// missing from a listing is treated as "unknown" and NOT used to reject it — we'd
-// rather show an uncertain listing than silently lose real results to a field the
-// AI just didn't report.
-function applyHardFilters(listings, f){
-  const kept = [], dropped = [];
-  for(const p of listings){
-    const reasons = [];
-
-    if(f.budget.min != null && p.price != null && p.price < f.budget.min) reasons.push('below min budget');
-    if(f.budget.max != null && p.price != null && p.price > f.budget.max) reasons.push('above max budget');
-
-    if(f.rooms.min != null && p.rooms != null && p.rooms < f.rooms.min) reasons.push('too few rooms');
-    if(f.rooms.max != null && p.rooms != null && p.rooms > f.rooms.max) reasons.push('too many rooms');
-
-    if(f.bedrooms.min != null && p.bedrooms != null && p.bedrooms < f.bedrooms.min) reasons.push('too few bedrooms');
-    if(f.bedrooms.max != null && p.bedrooms != null && p.bedrooms > f.bedrooms.max) reasons.push('too many bedrooms');
-
-    if(f.sqm.min != null && p.sqm != null && p.sqm < f.sqm.min) reasons.push('too small');
-    if(f.sqm.max != null && p.sqm != null && p.sqm > f.sqm.max) reasons.push('too large');
-
-    if(f.floor.min != null && p.floor != null && p.floor < f.floor.min) reasons.push('floor too low');
-    if(f.floor.max != null && p.floor != null && p.floor > f.floor.max) reasons.push('floor too high');
-
-    if(f.meuble === 'meuble' && p.meuble === false) reasons.push('not furnished');
-    if(f.meuble === 'vide' && p.meuble === true) reasons.push('furnished, not unfurnished');
-
-    // Required/excluded boolean features (elevator, balcony, haussman, kitchen)
-    for(const [key, want] of Object.entries(f.feats)){
-      if(want === null || want === undefined) continue;
-      const have = p[key === 'kitchen' ? 'equippedKitchen' : key];
-      if(have === undefined || have === null) continue; // unknown — don't reject on missing data
-      if(want === true && have === false) reasons.push(`missing required ${key}`);
-      if(want === false && have === true) reasons.push(`has excluded ${key}`);
-    }
-
-    // Arrondissement, if specified and the listing's address parses to one
-    if(f.location.arrondissements.length && p.address){
-      const m = String(p.address).match(/\b75(\d{3})\b|\bParis\s+(\d{1,2})(?:er|e|ème|eme)?\b/i);
-      let arr = null;
-      if(m){
-        if(m[1]) arr = parseInt(m[1], 10); // "75008" -> "008" -> 8
-        else if(m[2]) arr = parseInt(m[2], 10);
-      }
-      if(arr != null && !f.location.arrondissements.includes(arr)) reasons.push('outside selected arrondissements');
-    }
-
-    if(reasons.length){
-      dropped.push({ ...p, _dropReasons: reasons });
-    } else {
-      kept.push(p);
-    }
-  }
-  return { kept, dropped };
-}
-
 </script>
 </body>
 </html>
