@@ -41,6 +41,9 @@ exports.handler = async function (event) {
       if (result.listings.length === 0) {
         scrapeNotes.push(`${result.source}: page loaded but no listings were found.`);
       }
+      if (result.rentedFiltered) {
+        scrapeNotes.push(`${result.source}: excluded ${result.rentedFiltered} already-rented listing${result.rentedFiltered !== 1 ? 's' : ''} from results.`);
+      }
     }
 
     // Merge AI-search listings (if any) with real scraped listings into
