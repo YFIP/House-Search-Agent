@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Prospector — Your Friend in Paris</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --fb:#4FADF9;--rb:#345083;--cream:#FFF8F0;--alice:#DBECF7;--lip:#FF4769;--concrete:#D8D6D4;
+  --ink:#345083;--ink2:#5a6a8a;--ink3:#8a9ab8;--white:#FFFFFF;
+  --border:rgba(52,80,131,0.15);--border2:rgba(52,80,131,0.28);
+  --r:10px;--rs:6px;
+}
+body{font-family:system-ui,-apple-system,sans-serif;background:var(--cream);color:var(--rb);font-size:14px;line-height:1.5;min-height:100vh}
+.app-wrap{max-width:1300px;margin:0 auto;padding:24px}
+
+/* ── shared header ── */
+.app-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--border)}
+.brand-row{display:flex;align-items:center;gap:9px}
+.lm{width:30px;height:30px;background:var(--fb);border-radius:7px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.lm svg{width:15px;height:15px;fill:none;stroke:#fff;stroke-width:2}
+.brand-name{font-size:13px;font-weight:700;color:var(--rb);letter-spacing:.5px}
+.brand-sub{font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.4px}
+.page-title-big{font-size:18px;font-weight:700;color:var(--rb)}
+
+/* ── PAGE 1: criteria ── */
+#page-criteria{display:block}
+#page-results{display:none}
+
+.crit-page{background:var(--white);border:1px solid var(--border);border-radius:12px;padding:24px 28px}
+.top-row{display:grid;grid-template-columns:1.4fr 1fr;gap:18px;margin-bottom:18px}
+.bottom-row{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px}
+.crit-block{background:var(--cream);border:1px solid var(--border);border-radius:10px;padding:16px 18px}
+.crit-title{font-size:11px;font-weight:700;color:var(--rb);text-transform:uppercase;letter-spacing:.4px;margin-bottom:11px;display:flex;justify-content:space-between;align-items:center}
+.count-pill{font-size:9px;font-weight:600;color:var(--fb);background:var(--alice);padding:2px 9px;border-radius:14px}
+
+.arr-grid{display:grid;grid-template-columns:repeat(10,1fr);gap:5px}
+.arr-cell{aspect-ratio:1;border:1px solid var(--border);border-radius:5px;font-size:11px;font-weight:600;color:var(--ink2);background:var(--white);display:flex;align-items:center;justify-content:center;cursor:pointer;user-select:none;transition:all .1s}
+.arr-cell.on{background:var(--alice);border-color:var(--fb);color:var(--rb)}
+.arr-actions{display:flex;gap:10px;margin-top:7px}
+.arr-action-btn{font-size:10px;color:var(--fb);font-weight:600;cursor:pointer;background:none;border:none;font-family:inherit;padding:0}
+
+.sub-wrap{display:flex;flex-wrap:wrap;gap:5px;margin-top:10px}
+.subtag{padding:5px 11px;border:1px solid var(--border);border-radius:16px;font-size:10.5px;color:var(--ink2);background:var(--white);cursor:pointer;user-select:none;transition:all .1s}
+.subtag.on{background:var(--alice);border-color:var(--fb);color:var(--rb);font-weight:600}
+
+.near-mini{width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:11px;color:var(--rb);background:var(--white);margin-top:10px;outline:none;font-family:inherit}
+.near-mini:focus{border-color:var(--fb)}
+
+.src-wrap{display:flex;flex-wrap:wrap;gap:5px}
+.srctag{padding:5px 11px;border:1px solid var(--border);border-radius:16px;font-size:10.5px;color:var(--ink2);background:var(--white);cursor:pointer;user-select:none;transition:all .1s}
+.srctag.on{background:var(--alice);border-color:var(--fb);color:var(--rb);font-weight:600}
+.srctag.more-btn{color:var(--fb);font-weight:600;background:var(--white);border-style:dashed}
+.suggest-badge{font-size:9px;font-weight:600;padding:2px 8px;border-radius:14px;background:var(--lip);color:#fff;cursor:pointer}
+
+.full-src-panel{display:none;margin-top:12px;border:1px solid var(--border);border-radius:8px;padding:12px 14px;background:var(--white);max-height:260px;overflow-y:auto}
+.full-src-panel.open{display:block}
+.tier-lbl{font-size:9.5px;font-weight:700;color:var(--ink3);text-transform:uppercase;letter-spacing:.4px;margin:10px 0 6px}
+.tier-lbl:first-child{margin-top:0}
+.tier-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+
+.fl{font-size:10px;color:var(--ink2);margin-bottom:4px;display:block;font-weight:500}
+.ir{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:9px}
+.ir:last-child{margin-bottom:0}
+input[type=number],input[type=text]{padding:7px 9px;border:1px solid var(--border);border-radius:6px;font-size:11px;color:var(--rb);background:var(--white);width:100%;outline:none;font-family:inherit;transition:border-color .12s}
+input[type=number]:focus,input[type=text]:focus{border-color:var(--fb);box-shadow:0 0 0 2px rgba(79,173,249,.12)}
+
+.tg2{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+.tb2{padding:7px 8px;border:1px solid var(--border);border-radius:6px;background:var(--white);font-size:10.5px;color:var(--ink2);text-align:center;cursor:pointer;font-family:inherit;transition:all .12s}
+.tb2.on{background:#e8f5ee;border-color:#1a6635;color:#1a6635}
+.tb2.off{background:#fdedf0;border-color:#b02040;color:#b02040}
+
+.dropdown-toggle{display:flex;align-items:center;justify-content:space-between;width:100%;padding:9px 11px;background:var(--alice);border:1px solid rgba(79,173,249,.3);border-radius:7px;cursor:pointer;margin-top:9px}
+.dropdown-toggle-text{font-size:10.5px;font-weight:600;color:var(--rb);display:flex;align-items:center;gap:6px}
+.dropdown-toggle-text svg{width:13px;height:13px;stroke:var(--fb);fill:none;stroke-width:2}
+.chevron{width:11px;height:11px;stroke:var(--fb);fill:none;stroke-width:2.2;transition:transform .15s}
+.chevron.open{transform:rotate(180deg)}
+
+.dropdown-panel{display:none;margin-top:8px;border:1px solid var(--border);border-radius:8px;padding:12px 14px;background:var(--white)}
+.dropdown-panel.open{display:block}
+.dd-section{margin-bottom:12px}
+.dd-section:last-child{margin-bottom:0}
+.dd-label{font-size:9px;font-weight:600;color:var(--ink3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:7px}
+.dd-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+.dd-btn{padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--cream);font-size:10px;color:var(--ink2);text-align:left;cursor:pointer;font-family:inherit;transition:all .12s}
+.dd-btn.on{background:#e8f5ee;border-color:#1a6635;color:#1a6635}
+
+.dpe-row{display:flex;gap:4px}
+.dpe-cell{flex:1;text-align:center;padding:6px 0;font-size:10px;font-weight:700;border-radius:5px;border:2px solid transparent;cursor:pointer}
+.dpe-cell.on{border-color:var(--rb)}
+.dpe-a{background:#2a8a4a;color:#fff}.dpe-b{background:#5fa83f;color:#fff}.dpe-c{background:#a8c93f;color:#333}
+.dpe-d{background:#f0d33f;color:#333}.dpe-e{background:#e89b3f;color:#fff}.dpe-f{background:#d9633f;color:#fff}.dpe-g{background:#c43f3f;color:#fff}
+
+.commute-row{display:flex;gap:5px;align-items:center}
+.commute-mode{display:flex;gap:3px}
+.mode-btn{padding:6px 8px;border:1px solid var(--border);border-radius:5px;background:var(--cream);font-size:12px;cursor:pointer}
+.mode-btn.on{background:var(--alice);border-color:var(--fb)}
+
+.crit-footer{display:flex;align-items:center;justify-content:space-between;padding-top:18px;border-top:1px solid var(--border)}
+.summary-hint{font-size:11px;color:var(--ink3);max-width:600px}
+.summary-hint b{color:var(--rb);font-weight:600}
+.search-btn-big{padding:13px 32px;background:var(--fb);color:#fff;border:none;border-radius:9px;font-size:13.5px;font-weight:700;display:flex;align-items:center;gap:8px;box-shadow:0 3px 12px rgba(79,173,249,.35);cursor:pointer;transition:opacity .12s;font-family:inherit}
+.search-btn-big:hover{opacity:.9}
+.search-btn-big svg{width:16px;height:16px;fill:none;stroke:#fff;stroke-width:2.2}
+.search-btn-big:disabled{opacity:.5;cursor:not-allowed}
+
+/* ── PAGE 2: results ── */
+.results-page{background:var(--white);border:1px solid var(--border);border-radius:12px;padding:22px 26px}
+.results-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--border)}
+.results-title{font-size:18px;font-weight:700;color:var(--rb)}
+.results-sub{font-size:11px;color:var(--ink2);margin-top:2px}
+.action-row{display:flex;gap:9px}
+.btn-refresh{padding:10px 18px;background:var(--white);color:var(--rb);border:1.5px solid var(--fb);border-radius:8px;font-size:11.5px;font-weight:700;display:flex;align-items:center;gap:6px;cursor:pointer;font-family:inherit;transition:all .12s}
+.btn-refresh:hover{background:var(--alice)}
+.btn-refresh:disabled{opacity:.5;cursor:not-allowed}
+.btn-refresh svg{width:13px;height:13px;stroke:var(--fb);fill:none;stroke-width:2.2}
+.btn-new{padding:10px 18px;background:var(--rb);color:#fff;border:none;border-radius:8px;font-size:11.5px;font-weight:700;display:flex;align-items:center;gap:6px;cursor:pointer;font-family:inherit;transition:opacity .12s}
+.btn-new:hover{opacity:.9}
+.btn-new svg{width:13px;height:13px;stroke:#fff;fill:none;stroke-width:2.2}
+
+.filter-summary-bar{background:var(--alice);border:1px solid rgba(79,173,249,.3);border-radius:9px;padding:11px 15px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:14px}
+.fsb-text{font-size:11px;color:var(--rb);line-height:1.6}
+.fsb-text b{font-weight:700}
+.edit-btn{font-size:10.5px;font-weight:700;color:#fff;background:var(--fb);border:none;padding:8px 15px;border-radius:7px;white-space:nowrap;display:flex;align-items:center;gap:6px;cursor:pointer;font-family:inherit;transition:opacity .12s}
+.edit-btn:hover{opacity:.9}
+.edit-btn svg{width:11px;height:11px;stroke:#fff;fill:none;stroke-width:2.3}
+
+.aip{background:var(--alice);border-left:3px solid var(--fb);border-radius:9px;padding:11px 14px;margin-bottom:16px;font-size:12px;color:var(--rb);line-height:1.6;display:none}
+.aip-l{font-size:9px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--fb);opacity:.85;margin-bottom:3px}
+
+.cg{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
+.pc{background:var(--white);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;transition:border-color .18s,box-shadow .18s}
+.pc:hover{border-color:var(--border2);box-shadow:0 3px 16px rgba(52,80,131,.08)}
+.pch{padding:14px 14px 10px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.pp{font-size:17px;font-weight:700;letter-spacing:-.4px;color:var(--rb)}
+.pps{font-size:10px;color:var(--ink2);margin-top:1px}
+.sbg{font-size:9px;font-weight:600;padding:3px 8px;border-radius:20px;background:var(--alice);color:var(--rb);flex-shrink:0;white-space:nowrap}
+.sbg.lux{background:var(--rb);color:#fff}
+.pcb{padding:12px 14px}
+.pa{font-size:12px;font-weight:600;color:var(--rb);margin-bottom:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.specs{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:9px}
+.sp{padding:3px 7px;background:var(--cream);border-radius:4px;font-size:10px;color:var(--ink2)}
+.tags{display:flex;flex-wrap:wrap;gap:3px;margin-bottom:9px}
+.tag{font-size:9px;font-weight:600;padding:2px 7px;border-radius:3px}
+.ty{background:#e8f5ee;color:#1a6635}
+.tn{background:#fdedf0;color:#b02040}
+.tnx{background:var(--alice);color:var(--rb)}
+.ag{font-size:10px;color:var(--ink2);display:flex;align-items:center;gap:4px;padding-top:8px;border-top:1px solid var(--border)}
+.agv{font-size:9px;font-weight:700;color:#1a6635;margin-left:auto;display:flex;align-items:center;gap:3px}
+.pcf{padding:9px 14px;border-top:1px solid var(--border);background:var(--cream);display:flex;align-items:center}
+.mb{flex:1;margin-right:8px}.ml{font-size:9px;color:var(--ink2);margin-bottom:3px}
+.mt2{height:3px;background:var(--border);border-radius:2px;overflow:hidden}
+.mf{height:100%;border-radius:2px;background:var(--fb)}
+.mp{font-size:11px;font-weight:700;color:var(--rb);margin-right:8px}
+.vfull{display:flex;align-items:center;justify-content:center;gap:5px;width:100%;padding:8px;background:var(--fb);color:#fff;border:none;border-radius:7px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;margin-top:9px}
+
+.state{background:var(--white);border:1px solid var(--border);border-radius:var(--r);padding:60px 28px;text-align:center;color:var(--ink2)}
+.state svg{width:40px;height:40px;stroke:var(--ink3);fill:none;stroke-width:1.5;margin-bottom:14px}
+.state h3{font-size:15px;font-weight:600;color:var(--rb);margin-bottom:6px}
+.state p{font-size:13px;max-width:300px;margin:0 auto;line-height:1.65}
+.skel-g{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
+.skel{background:var(--white);border:1px solid var(--border);border-radius:var(--r);height:210px;overflow:hidden;position:relative}
+.skel::after{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(52,80,131,.05),transparent);animation:sh 1.4s infinite}
+@keyframes sh{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+
+@media (max-width: 900px){
+  .top-row{grid-template-columns:1fr}
+  .bottom-row{grid-template-columns:1fr 1fr}
+  .arr-grid{grid-template-columns:repeat(5,1fr)}
+}
+</style>
+</head>
+<body>
+<div class="app-wrap">
+
+  <div class="app-header">
+    <div class="brand-row">
+      <div class="lm"><svg viewBox="0 0 14 14"><path d="M2 12L7 2L12 12" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 9h6" stroke-linecap="round"/></svg></div>
+      <div><div class="brand-name">PROSPECTOR</div><div class="brand-sub">Your Friend in Paris</div></div>
+    </div>
+  </div>
+
+  <!-- ════════ PAGE 1: CRITERIA ════════ -->
+  <div id="page-criteria">
+    <div class="crit-page">
+      <div class="page-title-big" style="margin-bottom:18px">New property search</div>
+
+      <div class="top-row">
+        <div class="crit-block">
+          <div class="crit-title"><span>Location</span><span class="count-pill" id="locCount">No location set</span></div>
+
+          <div class="fl" style="margin-bottom:6px">Arrondissements (Paris)</div>
+          <div class="arr-grid" id="arrGrid"></div>
+          <div class="arr-actions">
+            <button class="arr-action-btn" onclick="selectAllArr()">Select all</button>
+            <button class="arr-action-btn" onclick="clearAllArr()">Clear</button>
+          </div>
+
+          <div class="fl" style="margin-top:12px;margin-bottom:6px">Western suburbs</div>
+          <div class="sub-wrap" id="suburbWrap"></div>
+
+          <div class="fl" style="margin-top:12px;margin-bottom:6px">Near (free text)</div>
+          <input type="text" id="nearText" class="near-mini" placeholder="e.g. near La Défense, close to Lycée International">
+        </div>
+
+        <div class="crit-block">
+          <div class="crit-title"><span>Sources</span><span class="count-pill" id="srcCount">4 selected</span></div>
+          <div class="src-wrap" id="quickSrcWrap"></div>
+          <div class="srctag more-btn" id="moreSrcToggle" onclick="toggleFullSrc()" style="margin-top:7px;display:inline-block">+ Show all 40+ sources</div>
+          <button class="arr-action-btn" style="margin-left:10px" onclick="selectAllSources()">Select all</button>
+          <button class="arr-action-btn" style="margin-left:8px" onclick="clearAllSources()">Clear</button>
+          <span id="luxSuggest" class="suggest-badge" style="display:none;margin-left:6px" onclick="applyLuxury()">+ Add luxury</span>
+          <span id="corpSuggest" class="suggest-badge" style="display:none;margin-left:6px" onclick="applyCorporate()">+ Add furnished</span>
+          <div class="full-src-panel" id="fullSrcPanel"></div>
+          <div style="font-size:9.5px;color:var(--ink3);margin-top:8px;line-height:1.5">Each selected source runs a real web search — more sources means a more thorough (and slightly slower) search.</div>
+        </div>
+      </div>
+
+      <div class="bottom-row">
+        <div class="crit-block">
+          <div class="crit-title">Rooms</div>
+          <span class="fl">Total rooms</span>
+          <div class="ir"><input type="number" id="rMin" placeholder="Min" min="1"><input type="number" id="rMax" placeholder="Max"></div>
+          <span class="fl">Bedrooms</span>
+          <div class="ir"><input type="number" id="bdMin" placeholder="Min" min="0"><input type="number" id="bdMax" placeholder="Max"></div>
+        </div>
+
+        <div class="crit-block">
+          <div class="crit-title">Budget &amp; surface</div>
+          <span class="fl">€ / mois</span>
+          <div class="ir"><input type="number" id="bMin" placeholder="Min" oninput="checkBudgetTier()"><input type="number" id="bMax" placeholder="Max" oninput="checkBudgetTier()"></div>
+          <span class="fl">m²</span>
+          <div class="ir"><input type="number" id="sMin" placeholder="Min" min="0"><input type="number" id="sMax" placeholder="Max" min="0"></div>
+        </div>
+
+        <div class="crit-block">
+          <div class="crit-title">Floor &amp; furnishing</div>
+          <span class="fl">Floor number</span>
+          <div class="ir"><input type="number" id="fMin" placeholder="Min" min="0"><input type="number" id="fMax" placeholder="Max"></div>
+          <div class="tg2">
+            <button class="tb2" data-g="m" data-v="meuble" onclick="setMeuble(this)">Meublé</button>
+            <button class="tb2" data-g="m" data-v="non" onclick="setMeuble(this)">Non meublé</button>
+            <button class="tb2" data-g="m" data-v="any" style="grid-column:1/-1" onclick="setMeuble(this)">Either</button>
+          </div>
+        </div>
+
+        <div class="crit-block">
+          <div class="crit-title">Features required</div>
+          <div class="tg2">
+            <button class="tb2" data-f="elevator" onclick="toggleFeat(this)">Elevator</button>
+            <button class="tb2" data-f="balcony" onclick="toggleFeat(this)">Balcony</button>
+            <button class="tb2" data-f="haussman" onclick="toggleFeat(this)">Haussmann</button>
+            <button class="tb2" data-f="kitchen" onclick="toggleFeat(this)">Eq. kitchen</button>
+          </div>
+
+          <div class="dropdown-toggle" onclick="toggleMoreFeats()">
+            <div class="dropdown-toggle-text">
+              <svg viewBox="0 0 14 14"><path d="M2 5h10M2 9h10" stroke-linecap="round"/></svg>
+              More features
+            </div>
+            <svg class="chevron" id="featChevron" viewBox="0 0 10 10"><path d="M2 3.5L5 6.5L8 3.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+
+          <div class="dropdown-panel" id="moreFeatPanel">
+            <div class="dd-section">
+              <div class="dd-label">Building &amp; condition</div>
+              <div class="dd-grid">
+                <button class="dd-btn" data-f2="newbuild" onclick="toggleFeat2(this)">New build</button>
+                <button class="dd-btn" data-f2="oldbuild" onclick="toggleFeat2(this)">Old / period</button>
+                <button class="dd-btn" data-f2="noGroundFloor" onclick="toggleFeat2(this)">Exclude ground floor</button>
+                <button class="dd-btn" data-f2="singleStorey" onclick="toggleFeat2(this)">Single-storey</button>
+              </div>
+            </div>
+            <div class="dd-section">
+              <div class="dd-label">Amenities</div>
+              <div class="dd-grid">
+                <button class="dd-btn" data-f2="garage" onclick="toggleFeat2(this)">Garage / parking</button>
+                <button class="dd-btn" data-f2="cellar" onclick="toggleFeat2(this)">Cellar</button>
+                <button class="dd-btn" data-f2="pool" onclick="toggleFeat2(this)">Swimming pool</button>
+                <button class="dd-btn" data-f2="fireplace" onclick="toggleFeat2(this)">Fireplace</button>
+                <button class="dd-btn" data-f2="ac" onclick="toggleFeat2(this)">Air conditioning</button>
+                <button class="dd-btn" data-f2="pmr" onclick="toggleFeat2(this)">Disabled access</button>
+              </div>
+            </div>
+            <div class="dd-section">
+              <div class="dd-label">Outlook</div>
+              <div class="dd-grid">
+                <button class="dd-btn" data-f2="view" onclick="toggleFeat2(this)">With a view</button>
+                <button class="dd-btn" data-f2="noOverlook" onclick="toggleFeat2(this)">No facing neighbors</button>
+              </div>
+            </div>
+            <div class="dd-section">
+              <div class="dd-label">Pets &amp; listing quality</div>
+              <div class="dd-grid">
+                <button class="dd-btn" data-f2="pets" onclick="toggleFeat2(this)">Pets allowed</button>
+                <button class="dd-btn" data-f2="photos" onclick="toggleFeat2(this)">Photos required</button>
+              </div>
+            </div>
+            <div class="dd-section">
+              <div class="dd-label">DPE energy rating (click to include)</div>
+              <div class="dpe-row" id="dpeRow"></div>
+            </div>
+            <div class="dd-section" style="margin-bottom:0">
+              <div class="dd-label">Commute time (approximate, optional)</div>
+              <div class="commute-row">
+                <input type="text" id="commuteAddr" placeholder="Office or school address">
+                <div class="commute-mode" id="commuteMode"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="crit-footer">
+        <div class="summary-hint" id="critSummary">No criteria set yet</div>
+        <button class="search-btn-big" id="sBtn1" onclick="goToResults()">
+          <svg viewBox="0 0 16 16"><circle cx="6.5" cy="6.5" r="4.5"/><path d="M10.5 10.5l3.5 3.5" stroke-linecap="round"/></svg>
+          Search listings
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════ PAGE 2: RESULTS ════════ -->
+  <div id="page-results">
+    <div class="results-page">
+      <div class="results-header">
+        <div>
+          <div class="results-title" id="resTitle">Results</div>
+          <div class="results-sub" id="resSub"></div>
+        </div>
+        <div class="action-row">
+          <button class="btn-refresh" id="rBtn" onclick="runSearch(true)">
+            <svg viewBox="0 0 14 14"><path d="M12 7A5 5 0 112 7" stroke-linecap="round"/><path d="M12 4v3h-3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Refresh
+          </button>
+          <button class="btn-new" onclick="goToCriteria(false)">
+            <svg viewBox="0 0 14 14"><path d="M7 2v10M2 7h10" stroke-linecap="round"/></svg>
+            New search
+          </button>
+        </div>
+      </div>
+
+      <div class="filter-summary-bar">
+        <div class="fsb-text" id="fsbText"></div>
+        <button class="edit-btn" onclick="goToCriteria(true)">
+          <svg viewBox="0 0 12 12"><path d="M8.5 1.5l2 2L4 10H2v-2z"/></svg>
+          Edit search
+        </button>
+      </div>
+
+      <div class="aip" id="aip"><div class="aip-l" id="aiplbl">AI summary</div><span id="aiptxt"></span></div>
+
+      <div id="content">
+        <div class="state">
+          <svg viewBox="0 0 40 40"><circle cx="18" cy="18" r="12"/><path d="M27 27l8 8" stroke-linecap="round"/><path d="M14 18h8M18 14v8" stroke-linecap="round"/></svg>
+          <h3>No search yet</h3>
+          <p>Go back and set your criteria, then click Search listings.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ══════════════════ DATA ══════════════════
+const ARRONDISSEMENTS = Array.from({length:20}, (_,i) => i+1);
+const activeArr = new Set();
+
+const WESTERN_SUBURBS = ["Neuilly-sur-Seine","Boulogne-Billancourt","Levallois-Perret","Saint-Cloud","Vincennes","Vésinet","Vaucresson","Saint-Germain-en-Laye","La Défense","Issy-les-Moulineaux","Rueil-Malmaison","Suresnes","Sceaux"];
+const activeSuburbs = new Set();
+
+const QUICK = ["SeLoger","Bien'ici","Century 21","Orpi"];
+const ALL_SOURCES = {
+  "Major networks": ["SeLoger","Bien'ici","Bienici","Century 21","Orpi","Laforet","Logic-Immo","Meilleurs Agents"],
+  "Luxury agencies": ["Barnes International","Sotheby's International Realty","Daniel Feau","Emile Garcin","John Taylor","Belles Demeures","Junot","Engel & Völkers","Eiffel Housing","France Ermitage"],
+  "Furnished / corporate housing": ["Book-a-flat","Paris Corporate Housing","Cosy Home","Tiemo","Scandic","Capitale Partners"],
+  "Independent & boutique agencies": ["Paris Seine Immobilier","Fredelion","Perenium","Paris Rental","Helix Immobilier","Blooming Home","Nicolas Devillard","Luxe Prestige Immo","Breteuil Homes","Quod et Associés","Palais Royal Immobilier","Patrimoine Immo","Vielmon","L'Agence Internationale","Patrimoine Ouest Parisien","Dynagest Immobilier","Moncim","Cabinet Montoro","AFR Immobilier","Deferla","Enaparte Paris"]
+};
+const LUXURY_TIER = ALL_SOURCES["Luxury agencies"];
+const CORP_TIER = ALL_SOURCES["Furnished / corporate housing"];
+const activeSources = new Set(QUICK);
+
+const feats = {elevator:null,balcony:null,haussman:null,kitchen:null};
+const feats2 = {newbuild:null,oldbuild:null,noGroundFloor:null,singleStorey:null,garage:null,cellar:null,pool:null,fireplace:null,ac:null,pmr:null,view:null,noOverlook:null,pets:null,photos:null};
+const FEAT2_LABELS = {
+  newbuild:'new construction (search for "neuf" or "immeuble récent")',
+  oldbuild:'period/old building (search for "ancien" or "immeuble ancien")',
+  noGroundFloor:'not ground floor (exclude listings described as "rez-de-chaussée")',
+  singleStorey:'single-storey (search for "plain-pied")',
+  garage:'garage or parking (search for "garage", "parking", or "place de parking")',
+  cellar:'cellar (search for "cave")',
+  pool:'swimming pool (search for "piscine")',
+  fireplace:'fireplace (search for "cheminée")',
+  ac:'air conditioning (search for "climatisation" or "climatisé")',
+  pmr:'disabled access (search for "accès PMR" or "accessible PMR")',
+  view:'with a view (search for "avec vue" or "vue dégagée")',
+  noOverlook:'no facing neighbors (search for "sans vis-à-vis")',
+  pets:'pets allowed (search for "animaux acceptés")',
+  photos:'listing must include real photos'
+};
+const DPE_GRADES = ['A','B','C','D','E','F','G'];
+const activeDpe = new Set();
+const COMMUTE_MODES = [{id:'walk',icon:'🚶'},{id:'bike',icon:'🚲'},{id:'transit',icon:'🚌'},{id:'car',icon:'🚗'}];
+let commuteMode = null;
+
+let meubl = null, lastFilters = null, busy = false, fullSrcOpen = false, moreFeatOpen = false;
+
+// ══════════════════ BUILD UI ══════════════════
+function buildArrGrid(){
+  document.getElementById('arrGrid').innerHTML = ARRONDISSEMENTS.map(n => {
+    const label = n===1 ? '1er' : n+'e';
+    return `<div class="arr-cell" data-arr="${n}" onclick="toggleArr(this,${n})">${label}</div>`;
+  }).join('');
+}
+function toggleArr(el, n){
+  activeArr.has(n) ? (activeArr.delete(n), el.classList.remove('on')) : (activeArr.add(n), el.classList.add('on'));
+  updateLocCount(); updateSummary();
+}
+function selectAllArr(){
+  ARRONDISSEMENTS.forEach(n=>activeArr.add(n));
+  document.querySelectorAll('.arr-cell').forEach(c=>c.classList.add('on'));
+  updateLocCount(); updateSummary();
+}
+function clearAllArr(){
+  activeArr.clear();
+  document.querySelectorAll('.arr-cell').forEach(c=>c.classList.remove('on'));
+  updateLocCount(); updateSummary();
+}
+
+function buildSuburbs(){
+  document.getElementById('suburbWrap').innerHTML = WESTERN_SUBURBS.map(s =>
+    `<div class="subtag" data-sub="${s}" onclick="toggleSuburb(this,'${s.replace(/'/g,"\\'")}')">${s}</div>`
+  ).join('');
+}
+function toggleSuburb(el, name){
+  activeSuburbs.has(name) ? (activeSuburbs.delete(name), el.classList.remove('on')) : (activeSuburbs.add(name), el.classList.add('on'));
+  updateLocCount(); updateSummary();
+}
+
+function updateLocCount(){
+  const parts = [];
+  if(activeArr.size) parts.push(`${activeArr.size} arr.`);
+  if(activeSuburbs.size) parts.push(`${activeSuburbs.size} suburb${activeSuburbs.size>1?'s':''}`);
+  document.getElementById('locCount').textContent = parts.length ? parts.join(' + ') + ' selected' : 'No location set';
+}
+
+function buildQuickSrc(){
+  document.getElementById('quickSrcWrap').innerHTML = QUICK.map(s =>
+    `<div class="srctag on" data-s="${s}" onclick="toggleSource(this,'${s.replace(/'/g,"\\'")}')">${s}</div>`
+  ).join('');
+}
+function buildFullSrc(){
+  let html = '';
+  Object.entries(ALL_SOURCES).forEach(([tier, sources]) => {
+    html += `<div class="tier-lbl">${tier}</div><div class="tier-grid">`;
+    sources.forEach(s => {
+      const isOn = activeSources.has(s) ? 'on' : '';
+      html += `<div class="srctag ${isOn}" data-s="${s}" onclick="toggleSource(this,'${s.replace(/'/g,"\\'")}')">${s}</div>`;
+    });
+    html += `</div>`;
+  });
+  document.getElementById('fullSrcPanel').innerHTML = html;
+}
+function toggleSource(el, name){
+  activeSources.has(name) ? (activeSources.delete(name), el.classList.remove('on')) : (activeSources.add(name), el.classList.add('on'));
+  document.getElementById('srcCount').textContent = `${activeSources.size} selected`;
+  // sync both quick and full panel checkboxes for same source
+  document.querySelectorAll(`[data-s="${name.replace(/"/g,'\\"')}"]`).forEach(e=>{
+    activeSources.has(name) ? e.classList.add('on') : e.classList.remove('on');
+  });
+  updateSummary();
+}
+function toggleFullSrc(){
+  fullSrcOpen = !fullSrcOpen;
+  document.getElementById('fullSrcPanel').classList.toggle('open', fullSrcOpen);
+  document.getElementById('moreSrcToggle').textContent = fullSrcOpen ? '− Hide extra sources' : '+ Show all 40+ sources';
+}
+function selectAllSources(){
+  Object.values(ALL_SOURCES).flat().forEach(s => activeSources.add(s));
+  QUICK.forEach(s => activeSources.add(s));
+  buildQuickSrc(); buildFullSrc();
+  document.getElementById('srcCount').textContent = `${activeSources.size} selected`;
+  if(!fullSrcOpen) toggleFullSrc();
+  updateSummary();
+}
+function clearAllSources(){
+  activeSources.clear();
+  buildQuickSrc(); buildFullSrc();
+  document.getElementById('srcCount').textContent = `0 selected`;
+  updateSummary();
+}
+function checkBudgetTier(){
+  const max = +document.getElementById('bMax').value || 0;
+  document.getElementById('luxSuggest').style.display = max >= 4000 ? 'inline-block' : 'none';
+  updateSummary();
+}
+function applyLuxury(){
+  LUXURY_TIER.forEach(s => activeSources.add(s));
+  document.getElementById('luxSuggest').style.display = 'none';
+  buildFullSrc(); buildQuickSrc();
+  document.getElementById('srcCount').textContent = `${activeSources.size} selected`;
+  if(!fullSrcOpen) toggleFullSrc();
+  updateSummary();
+}
+function applyCorporate(){
+  CORP_TIER.forEach(s => activeSources.add(s));
+  document.getElementById('corpSuggest').style.display = 'none';
+  buildFullSrc(); buildQuickSrc();
+  document.getElementById('srcCount').textContent = `${activeSources.size} selected`;
+  if(!fullSrcOpen) toggleFullSrc();
+  updateSummary();
+}
+
+function setMeuble(btn){
+  document.querySelectorAll('[data-g="m"]').forEach(b=>b.classList.remove('on'));
+  meubl = btn.dataset.v; btn.classList.add('on');
+  document.getElementById('corpSuggest').style.display = (meubl==='meuble') ? 'inline-block' : 'none';
+  updateSummary();
+}
+function toggleFeat(btn){
+  const f = btn.dataset.f;
+  if(feats[f]===null){feats[f]=true;btn.classList.add('on');btn.classList.remove('off')}
+  else if(feats[f]===true){feats[f]=false;btn.classList.remove('on');btn.classList.add('off')}
+  else{feats[f]=null;btn.classList.remove('on','off')}
+  updateSummary();
+}
+function toggleFeat2(btn){
+  const f = btn.dataset.f2;
+  feats2[f] = !feats2[f] ? true : null;
+  btn.classList.toggle('on', !!feats2[f]);
+  updateSummary();
+}
+function toggleMoreFeats(){
+  moreFeatOpen = !moreFeatOpen;
+  document.getElementById('moreFeatPanel').classList.toggle('open', moreFeatOpen);
+  document.getElementById('featChevron').classList.toggle('open', moreFeatOpen);
+}
+function buildDpe(){
+  document.getElementById('dpeRow').innerHTML = DPE_GRADES.map(g =>
+    `<div class="dpe-cell dpe-${g.toLowerCase()}" data-dpe="${g}" onclick="toggleDpe(this,'${g}')">${g}</div>`
+  ).join('');
+}
+function toggleDpe(el, g){
+  activeDpe.has(g) ? (activeDpe.delete(g), el.classList.remove('on')) : (activeDpe.add(g), el.classList.add('on'));
+  updateSummary();
+}
+function buildCommuteModes(){
+  document.getElementById('commuteMode').innerHTML = COMMUTE_MODES.map(m =>
+    `<div class="mode-btn" data-mode="${m.id}" onclick="setCommuteMode(this,'${m.id}')">${m.icon}</div>`
+  ).join('');
+}
+function setCommuteMode(el, id){
+  document.querySelectorAll('.mode-btn').forEach(b=>b.classList.remove('on'));
+  if(commuteMode === id){ commuteMode = null; }
+  else { commuteMode = id; el.classList.add('on'); }
+  updateSummary();
+}
+
+buildArrGrid(); buildSuburbs(); buildQuickSrc(); buildFullSrc(); buildDpe(); buildCommuteModes();
+document.getElementById('nearText').addEventListener('input', updateSummary);
+document.getElementById('commuteAddr').addEventListener('input', updateSummary);
+['rMin','rMax','bdMin','bdMax','sMin','sMax','fMin','fMax'].forEach(id=>{
+  document.getElementById(id).addEventListener('input', updateSummary);
+});
+
+// ══════════════════ SUMMARY LINE ══════════════════
+function updateSummary(){
+  const parts = [];
+  if(activeArr.size) parts.push(`<b>${activeArr.size} arrondissement${activeArr.size>1?'s':''}</b>`);
+  if(activeSuburbs.size) parts.push(`<b>${activeSuburbs.size} suburb${activeSuburbs.size>1?'s':''}</b>`);
+  const near = document.getElementById('nearText').value.trim();
+  if(near) parts.push(`near <b>"${near}"</b>`);
+  const bMin = document.getElementById('bMin').value, bMax = document.getElementById('bMax').value;
+  if(bMin || bMax) parts.push(`<b>€${bMin||'0'}–${bMax||'∞'}</b>`);
+  const rMin = document.getElementById('rMin').value, rMax = document.getElementById('rMax').value;
+  if(rMin || rMax) parts.push(`${rMin||'?'}-${rMax||'?'} rooms`);
+  parts.push(`<b>${activeSources.size}</b> source${activeSources.size!==1?'s':''}`);
+  document.getElementById('critSummary').innerHTML = parts.length ? parts.join(' · ') : 'No criteria set yet';
+}
+updateSummary();
+
+// ══════════════════ PAGE NAVIGATION ══════════════════
+function goToResults(){
+  document.getElementById('page-criteria').style.display = 'none';
+  document.getElementById('page-results').style.display = 'block';
+  runSearch(false);
+}
+function goToCriteria(keepFilters){
+  document.getElementById('page-results').style.display = 'none';
+  document.getElementById('page-criteria').style.display = 'block';
+}
+
+// ══════════════════ FILTER OBJECT ══════════════════
+const v = id => +document.getElementById(id).value || null;
+function getFilters(){
+  return {
+    sources: [...activeSources],
+    location: {
+      arrondissements: [...activeArr].sort((a,b)=>a-b),
+      suburbs: [...activeSuburbs],
+      near: document.getElementById('nearText').value.trim() || null
+    },
+    rooms: {min:v('rMin'), max:v('rMax')},
+    bedrooms: {min:v('bdMin'), max:v('bdMax')},
+    budget: {min:v('bMin'), max:v('bMax')},
+    sqm: {min:v('sMin'), max:v('sMax')},
+    floor: {min:v('fMin'), max:v('fMax')},
+    meuble: meubl,
+    feats: {...feats},
+    feats2: {...feats2},
+    dpe: [...activeDpe],
+    commute: (document.getElementById('commuteAddr').value.trim() && commuteMode) ? {
+      address: document.getElementById('commuteAddr').value.trim(),
+      mode: commuteMode
+    } : null
+  };
+}
+
+function isLuxurySource(s){ return LUXURY_TIER.includes(s); }
+
+// ══════════════════ PROMPT BUILDER ══════════════════
+function buildPrompt(f, ref){
+  const d = new Date().toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'});
+  const lbl = {
+    elevator:'elevator (search French listings for "ascenseur")',
+    balcony:'balcony (search for "balcon" or "balcon filant")',
+    haussman:'Haussmann-era building (search for "immeuble haussmannien", "style haussmannien", or "immeuble en pierre de taille" — these are the actual terms used in French listings, not the English word "Haussmann")',
+    kitchen:'equipped kitchen (search for "cuisine équipée", "cuisine aménagée et équipée", or "cuisine entièrement équipée")'
+  };
+  const req = Object.entries(f.feats).filter(([,v])=>v===true).map(([k])=>lbl[k]);
+  const excl = Object.entries(f.feats).filter(([,v])=>v===false).map(([k])=>lbl[k]);
+  const req2 = Object.entries(f.feats2).filter(([,v])=>v===true).map(([k])=>FEAT2_LABELS[k]);
+
+  let p = `You are a real estate search AI for Your Friend in Paris, a Paris relocation agency. Today: ${d}.\nSearch across these named agency sources: ${f.sources.join(', ')}.\nCRITICAL: Agency listings ONLY — no private/particulier listings. Attribute each listing realistically to one of the sources provided.\n${ref?'REFRESH: return freshly sourced listings, different from a prior search.\n':''}\nClient criteria:`;
+
+  const locParts = [];
+  if(f.location.arrondissements.length) locParts.push(`Paris arrondissements: ${f.location.arrondissements.map(n=>n+(n===1?'er':'e')).join(', ')}`);
+  if(f.location.suburbs.length) locParts.push(`Western suburbs: ${f.location.suburbs.join(', ')}`);
+  if(f.location.near) locParts.push(`Near/close to: "${f.location.near}"`);
+  p += locParts.length ? `\n- Location: ${locParts.join(' | ')}` : `\n- Location: no restriction`;
+
+  if(f.rooms.min||f.rooms.max) p += `\n- Rooms: ${f.rooms.min||'any'}–${f.rooms.max||'any'}`;
+  if(f.bedrooms.min||f.bedrooms.max) p += `\n- Bedrooms: ${f.bedrooms.min||'any'}–${f.bedrooms.max||'any'}`;
+  if(f.budget.min||f.budget.max) p += `\n- Budget: ${f.budget.min?'€'+f.budget.min.toLocaleString():'no min'}–${f.budget.max?'€'+f.budget.max.toLocaleString():'no max'}/mo`;
+  if(f.sqm.min||f.sqm.max) p += `\n- Surface: ${f.sqm.min||'any'}–${f.sqm.max||'any'} m²`;
+  if(f.floor.min!=null||f.floor.max!=null) p += `\n- Floor: ${f.floor.min??'any'}–${f.floor.max??'any'}`;
+  if(f.meuble) p += `\n- Furnishing: ${f.meuble==='meuble'?'Meublé':'Non meublé'}`;
+  if(req.length) p += `\n- Must have: ${req.join(', ')}`;
+  if(excl.length) p += `\n- Must NOT have: ${excl.join(', ')}`;
+  if(req2.length) p += `\n- Additional required features: ${req2.join(', ')}`;
+  if(f.dpe.length) p += `\n- DPE energy rating must be one of: ${f.dpe.join(', ')}`;
+  if(f.commute) p += `\n- Should be a reasonable commute (${f.commute.mode}) from: ${f.commute.address}`;
+
+  p += `\n\nCRITICAL — REAL LISTINGS ONLY: Use the web_search tool to find ACTUAL, CURRENTLY LIVE listings on each of the named source websites above. Search each source's site (e.g. "site:seloger.com" style queries, or the agency's own domain) for real listings matching the criteria. Do NOT invent, estimate, or fabricate any listing. For each source:\n- If you find a real matching listing, extract its real details and the REAL URL of that listing page (or, if a listing-level URL isn't available, the real URL of that source's search/results page with these filters).\n- If a source genuinely has no live listings matching these criteria right now, OMIT that source entirely from the results rather than inventing one. Do not pad results to reach a target count.\n\nReturn ONLY valid JSON, no markdown, no commentary outside the JSON. Your entire response must start with { and end with } — do not write any sentence, explanation, or summary before or after the JSON object.\n{"reasoning":"2-3 sentences on what was found, which sources had no matches, and market context","listings":[{"id":"str","source":"exact source name from list above","agency":"real agency/brokerage name as found","address":"real address with arrondissement or commune as found","url":"REAL URL of the listing or search results page found via web search","price":2500,"pricePerSqm":50,"rooms":4,"bedrooms":2,"bathrooms":1,"sqm":55,"sqft":592,"floor":3,"totalFloors":7,"meuble":true,"elevator":true,"balcony":false,"haussman":true,"equippedKitchen":true,"matchScore":95,"ref":"ref number if shown","listedDate":"date if shown","isExactListing":true}]}\n\nSet "isExactListing" to true only if the URL points to one specific real property listing; set it to false if the URL points to a source's search/results page (no single matching listing was found, but the source itself has a relevant live search you can link to).`;
+  return p;
+}
+
+// ══════════════════ SEARCH EXECUTION ══════════════════
+async function runSearch(ref){
+  if(busy) return; busy = true;
+  const f = ref && lastFilters ? lastFilters : getFilters();
+  if(!ref) lastFilters = f;
+
+  if(!f.sources.length){ alert('Select at least one source.'); busy=false; goToCriteria(); return; }
+
+  const rBtn = document.getElementById('rBtn');
+  rBtn.disabled = true;
+  rBtn.innerHTML = `<svg viewBox="0 0 14 14" style="width:13px;height:13px;fill:none;stroke:var(--fb);stroke-width:2;animation:spin 1s linear infinite"><path d="M12 7A5 5 0 112 7" stroke-linecap="round"/><path d="M12 4v3h-3" stroke-linecap="round" stroke-linejoin="round"/></svg> Refreshing…`;
+
+  document.getElementById('resTitle').textContent = ref ? 'Refreshing…' : 'Searching live listings…';
+  document.getElementById('resSub').textContent = `Running real web searches across ${f.sources.length} source${f.sources.length!==1?'s':''} — this can take 10-20 seconds`;
+  document.getElementById('aip').style.display = 'none';
+  document.getElementById('content').innerHTML = `<div class="skel-g">${Array(6).fill('<div class="skel"></div>').join('')}</div>`;
+  renderFilterSummaryBar(f);
+
+  try{
+    const res = await fetch('https://00gixdjmf8.execute-api.eu-west-1.amazonaws.com/Prod/search', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        messages:[{role:'user',content:buildPrompt(f,ref)}],
+        maxSearches: Math.max(f.sources.length, 1)
+      })
+    });
+    const data = await res.json();
+
+    if(data.error){
+      throw new Error(data.error.message || data.error);
+    }
+
+    // With web search enabled, content is an array of mixed block types:
+    // server_tool_use, web_search_tool_result, and text. We only want the
+    // final text block(s), which contain Claude's structured JSON answer.
+    const textBlocks = (data.content || [])
+      .filter(block => block.type === 'text')
+      .map(block => block.text)
+      .join('\n');
+
+    if(!textBlocks.trim()){
+      throw new Error('No text response received — the model may have only returned search activity.');
+    }
+
+    const cleaned = textBlocks.replace(/```json|```/g,'').trim();
+    // Claude sometimes adds a sentence before the JSON despite instructions not to.
+    // Extract just the JSON object: from the first { to the matching last }.
+    const firstBrace = cleaned.indexOf('{');
+    const lastBrace = cleaned.lastIndexOf('}');
+    if(firstBrace === -1 || lastBrace === -1 || lastBrace < firstBrace){
+      throw new Error('The response did not contain a recognizable JSON result.');
+    }
+    const jsonSlice = cleaned.slice(firstBrace, lastBrace + 1);
+    const result = JSON.parse(jsonSlice);
+    render(result, f, ref);
+  }catch(e){
+    document.getElementById('content').innerHTML = `<div class="state"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="16"/><path d="M20 12v10M20 26v2" stroke-linecap="round"/></svg><h3>Search failed</h3><p>${e.message ? e.message : 'Could not complete the search. Check your connection and try again.'}</p></div>`;
+    document.getElementById('resTitle').textContent = 'Search error';
+  }
+
+  rBtn.disabled = false;
+  rBtn.innerHTML = `<svg viewBox="0 0 14 14"><path d="M12 7A5 5 0 112 7" stroke-linecap="round"/><path d="M12 4v3h-3" stroke-linecap="round" stroke-linejoin="round"/></svg> Refresh`;
+  busy = false;
+}
+
+function renderFilterSummaryBar(f){
+  const parts = [];
+  if(f.location.arrondissements.length) parts.push(`<b>${f.location.arrondissements.length} arrondissement${f.location.arrondissements.length>1?'s':''}</b>`);
+  if(f.location.suburbs.length) parts.push(`<b>${f.location.suburbs.length} suburb${f.location.suburbs.length>1?'s':''}</b>`);
+  if(f.location.near) parts.push(`near <b>"${f.location.near}"</b>`);
+  if(f.budget.min||f.budget.max) parts.push(`<b>€${f.budget.min||0}–${f.budget.max||'∞'}</b>`);
+  if(f.rooms.min||f.rooms.max) parts.push(`${f.rooms.min||'?'}-${f.rooms.max||'?'} rooms`);
+  if(f.meuble) parts.push(f.meuble==='meuble'?'Meublé':'Non meublé');
+  parts.push(`${f.sources.length} sources`);
+  document.getElementById('fsbText').innerHTML = parts.join(' · ');
+}
+
+function fmt(n){return Number(n).toLocaleString('fr-FR')}
+function tagEl(l,val,req){
+  if(req===null||req===undefined) return `<span class="tag tnx">${val?'✓':'✗'} ${l}</span>`;
+  return `<span class="tag ${val?'ty':'tn'}">${val?'✓':'✗'} ${l}</span>`;
+}
+
+function render(result, f, ref){
+  document.getElementById('aiplbl').textContent = ref ? '↻ Refresh — AI summary' : 'AI filter summary';
+  document.getElementById('aiptxt').textContent = result.reasoning || '';
+  document.getElementById('aip').style.display = 'block';
+
+  const ls = result.listings || [];
+  const now = new Date();
+  document.getElementById('resTitle').textContent = `${ls.length} agency listing${ls.length!==1?'s':''} found`;
+  document.getElementById('resSub').textContent = `Last updated ${now.toLocaleDateString('fr-FR',{day:'numeric',month:'long'})} at ${now.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}`;
+
+  if(!ls.length){
+    document.getElementById('content').innerHTML = `<div class="state"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="16"/><path d="M14 26L26 14M14 14L26 26" stroke-linecap="round"/></svg><h3>No matches found</h3><p>No agency listings matched all criteria. Try relaxing one or two filters.</p></div>`;
+    return;
+  }
+
+  document.getElementById('content').innerHTML = `<div class="cg">${ls.map(p=>{
+    const lux = isLuxurySource(p.source);
+    const linkLabel = p.isExactListing ? `View listing on ${p.source}` : `View search on ${p.source}`;
+    const safeUrl = p.url ? p.url.replace(/"/g,'&quot;') : '#';
+    return `
+    <div class="pc">
+      <div class="pch"><div><div class="pp">${fmt(p.price)} €</div><div class="pps">${p.pricePerSqm?fmt(p.pricePerSqm)+' €/m²':''}</div></div><span class="sbg ${lux?'lux':''}">${p.source}</span></div>
+      <div class="pcb">
+        <div class="pa" title="${p.address}">${p.address}</div>
+        <div class="specs">
+          <span class="sp">${p.rooms} rooms</span>
+          <span class="sp">${p.bedrooms} bed · ${p.bathrooms} bath</span>
+          <span class="sp">${p.sqm} m² / ${p.sqft} ft²</span>
+          <span class="sp">Floor ${p.floor}${p.totalFloors?'/'+p.totalFloors:''}</span>
+        </div>
+        <div class="tags">
+          ${tagEl('Elevator',p.elevator,f.feats.elevator)}
+          ${tagEl('Balcony',p.balcony,f.feats.balcony)}
+          ${tagEl('Haussmann',p.haussman,f.feats.haussman)}
+          ${tagEl('Eq. kitchen',p.equippedKitchen,f.feats.kitchen)}
+          <span class="tag tnx">${p.meuble?'Meublé':'Non meublé'}</span>
+          ${p.isExactListing===false?'<span class="tag tnx">Search page, not single listing</span>':''}
+        </div>
+        <div class="ag">
+          <span>${p.agency}</span>
+          <span style="opacity:.3;margin:0 3px">·</span>
+          <span style="opacity:.5">${p.ref||'—'}</span>
+          ${p.listedDate?`<span style="opacity:.3;margin:0 3px">·</span><span style="opacity:.5">${p.listedDate}</span>`:''}
+          <div class="agv">✓ Verified</div>
+        </div>
+        <a class="vfull" href="${safeUrl}" target="_blank" rel="noopener noreferrer" style="text-decoration:none;display:flex">${linkLabel}</a>
+      </div>
+      <div class="pcf"><div class="mb"><div class="ml">Match score</div><div class="mt2"><div class="mf" style="width:${p.matchScore}%"></div></div></div><span class="mp">${p.matchScore}%</span></div>
+    </div>`;
+  }).join('')}</div>`;
+}
+</script>
+</body>
+</html>
