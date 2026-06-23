@@ -53,20 +53,199 @@ const SCRAPER_CONFIG = {
     },
   },
 
-  // Cabinet Montoro, AFR Immobilier, and Patrimoine Ouest Parisien were
-  // all confirmed this session to run on the same Orisha/Poliris agency
-  // website platform as Vielmon (same "/fiches/.../something.html" link
-  // pattern, same general page structure). They are STUBBED here, not
-  // yet enabled — copy the Vielmon `extract` function and swap in the
-  // real URL once each one is individually tested and confirmed working,
-  // the same way Vielmon was proven above. Do not assume the shared
-  // platform guarantees an identical DOM — verify each one.
-  //
-  // 'Cabinet Montoro': {
-  //   url: 'https://www.cabinet-montoro.fr/annonces/transaction/Location.html',
-  //   waitForSelector: 'a[href*="/fiches/"]',
-  //   extract: () => { /* same as Vielmon, verify before enabling */ },
-  // },
+  // Cabinet Montoro, AFR Immobilier, and Patrimoine Ouest Parisien — all
+  // confirmed this session via direct fetch to run on the same
+  // Orisha/Poliris platform as Vielmon: identical "/fiches/.../*.html"
+  // listing link pattern, identical "Loyer X €/mois ... X pièce(s) ...
+  // Réf : X" text structure. The Vielmon extract function works
+  // unchanged for all three — verified by reading live page content,
+  // not assumed from the platform match alone.
+  'Cabinet Montoro': {
+    url: 'https://www.cabinet-montoro.fr/annonces/transaction/Location.html',
+    waitForSelector: 'a[href*="/fiches/"]',
+    extract: () => {
+      const results = [];
+      const links = Array.from(document.querySelectorAll('a[href*="/fiches/"]'));
+      const seen = new Set();
+      for (const link of links) {
+        const href = link.href;
+        if (seen.has(href)) continue;
+        seen.add(href);
+        let container = link.closest('div') || link.parentElement;
+        for (let i = 0; i < 3 && container && container.innerText.length < 30; i++) {
+          container = container.parentElement;
+        }
+        const text = container ? container.innerText.replace(/\s+/g, ' ').trim() : '';
+        results.push({ url: href, rawText: text.slice(0, 300) });
+      }
+      return results;
+    },
+  },
+
+  'AFR Immobilier': {
+    url: 'https://www.afr-immobilier.com/annonces/transaction/Location.html',
+    waitForSelector: 'a[href*="/fiches/"]',
+    extract: () => {
+      const results = [];
+      const links = Array.from(document.querySelectorAll('a[href*="/fiches/"]'));
+      const seen = new Set();
+      for (const link of links) {
+        const href = link.href;
+        if (seen.has(href)) continue;
+        seen.add(href);
+        let container = link.closest('div') || link.parentElement;
+        for (let i = 0; i < 3 && container && container.innerText.length < 30; i++) {
+          container = container.parentElement;
+        }
+        const text = container ? container.innerText.replace(/\s+/g, ' ').trim() : '';
+        results.push({ url: href, rawText: text.slice(0, 300) });
+      }
+      return results;
+    },
+  },
+
+  'Patrimoine Ouest Parisien': {
+    url: 'https://www.patrimoineouestparisien.fr/annonces/transaction/Location.html',
+    waitForSelector: 'a[href*="/fiches/"]',
+    extract: () => {
+      const results = [];
+      const links = Array.from(document.querySelectorAll('a[href*="/fiches/"]'));
+      const seen = new Set();
+      for (const link of links) {
+        const href = link.href;
+        if (seen.has(href)) continue;
+        seen.add(href);
+        let container = link.closest('div') || link.parentElement;
+        for (let i = 0; i < 3 && container && container.innerText.length < 30; i++) {
+          container = container.parentElement;
+        }
+        const text = container ? container.innerText.replace(/\s+/g, ' ').trim() : '';
+        results.push({ url: href, rawText: text.slice(0, 300) });
+      }
+      return results;
+    },
+  },
+
+  // Paris Seine Immobilier — confirmed this session: also Orisha/Poliris
+  // (same /fiches/.../*.html pattern), BUT its listing text is verbose,
+  // multi-paragraph marketing copy with price/rooms/surface appearing as
+  // trailing lines, not Vielmon's compact inline format. parseListingText
+  // (regex-based, searches the whole block) was tested against this real
+  // format and correctly extracts price/rooms/sqm/meuble — only the
+  // address field is unreliable here, which is an acceptable tradeoff.
+  // Raising the text cutoff from 300 to 500 chars since these listings
+  // run longer before the price/specs lines appear.
+  'Paris Seine Immobilier': {
+    url: 'https://www.paris-seine-immobilier.com/annonces/transaction/Location.html',
+    waitForSelector: 'a[href*="/fiches/"]',
+    extract: () => {
+      const results = [];
+      const links = Array.from(document.querySelectorAll('a[href*="/fiches/"]'));
+      const seen = new Set();
+      for (const link of links) {
+        const href = link.href;
+        if (seen.has(href)) continue;
+        seen.add(href);
+        let container = link.closest('div') || link.parentElement;
+        for (let i = 0; i < 4 && container && container.innerText.length < 60; i++) {
+          container = container.parentElement;
+        }
+        const text = container ? container.innerText.replace(/\s+/g, ' ').trim() : '';
+        results.push({ url: href, rawText: text.slice(0, 500) });
+      }
+      return results;
+    },
+  },
+
+  // Fredelion — confirmed this session: built on the Billie.immo platform,
+  // NOT Orisha. Different link pattern: /fr/immobilier/location/{type}/
+  // {city}/{slug}/{id}. Text is cleanly separated: title, then
+  // "Appartement X pièce(s)", then "X €/mois CC honoraires inclus", then
+  // "Xm²", then "X chambre(s)". Confirmed via live fetch — 30 real
+  // listings visible directly in server-rendered HTML, no JS needed.
+  Fredelion: {
+    url: 'https://www.fredelion.com/fr/immobilier/location',
+    waitForSelector: 'a[href*="/fr/immobilier/location/"]',
+    extract: () => {
+      const results = [];
+      // Fredelion's listing links include a trailing numeric ID segment
+      // (e.g. /appartement/paris/paris-16-rue-claude-lorrain/87044) —
+      // filter out the bare category links (which lack that trailing ID)
+      // to avoid treating navigation links as listings.
+      const links = Array.from(document.querySelectorAll('a[href*="/fr/immobilier/location/"]'))
+        .filter(a => /\/\d+$/.test(a.href));
+      const seen = new Set();
+      for (const link of links) {
+        const href = link.href;
+        if (seen.has(href)) continue;
+        seen.add(href);
+        let container = link.closest('div') || link.parentElement;
+        for (let i = 0; i < 3 && container && container.innerText.length < 30; i++) {
+          container = container.parentElement;
+        }
+        const text = container ? container.innerText.replace(/\s+/g, ' ').trim() : '';
+        results.push({ url: href, rawText: text.slice(0, 300) });
+      }
+      return results;
+    },
+  },
+
+  // Perenium — confirmed this session: built on Pilotim platform. Link
+  // pattern: /fiche-{type}-a-louer-{city}-ref-{id}.php (note: "fiche"
+  // singular, NOT Orisha's "/fiches/" plural — different platform,
+  // coincidentally similar word). Text is compact and appears directly
+  // in/near the link itself: "APPARTEMENT T2 A LOUER SURESNES 1 198 €
+  // charges comprises par mois". Confirmed via live fetch.
+  Perenium: {
+    url: 'https://www.perenium.eu/location.php',
+    waitForSelector: 'a[href*="/fiche-"]',
+    extract: () => {
+      const results = [];
+      const links = Array.from(document.querySelectorAll('a[href*="/fiche-"]'));
+      const seen = new Set();
+      for (const link of links) {
+        const href = link.href;
+        if (seen.has(href)) continue;
+        seen.add(href);
+        let container = link.closest('div') || link.parentElement;
+        for (let i = 0; i < 3 && container && container.innerText.length < 20; i++) {
+          container = container.parentElement;
+        }
+        const text = container ? container.innerText.replace(/\s+/g, ' ').trim() : '';
+        results.push({ url: href, rawText: text.slice(0, 300) });
+      }
+      return results;
+    },
+  },
+
+  // Helix Immobilier — confirmed this session: built on JALIS platform.
+  // Link pattern: /details-{slug}-{id} (no file extension, no /fiches/).
+  // Text includes title, short description, and price as separate
+  // visible text near the link. Confirmed via live fetch on the
+  // homepage — using the dedicated rental category page for actual
+  // scraping since the homepage mixes sale ("Acheter") and rental
+  // ("Louer") listings together.
+  'Helix Immobilier': {
+    url: 'https://www.heliximmobilier.com/location-appartements-w1',
+    waitForSelector: 'a[href*="/details-"]',
+    extract: () => {
+      const results = [];
+      const links = Array.from(document.querySelectorAll('a[href*="/details-"]'));
+      const seen = new Set();
+      for (const link of links) {
+        const href = link.href;
+        if (seen.has(href)) continue;
+        seen.add(href);
+        let container = link.closest('div') || link.parentElement;
+        for (let i = 0; i < 4 && container && container.innerText.length < 30; i++) {
+          container = container.parentElement;
+        }
+        const text = container ? container.innerText.replace(/\s+/g, ' ').trim() : '';
+        results.push({ url: href, rawText: text.slice(0, 300) });
+      }
+      return results;
+    },
+  },
 };
 
 module.exports = { SCRAPER_CONFIG };
