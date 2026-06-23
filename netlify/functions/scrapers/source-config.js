@@ -246,6 +246,41 @@ const SCRAPER_CONFIG = {
       return results;
     },
   },
+
+  // Breteuil Homes — confirmed this session: custom platform (Sentry-
+  // instrumented, custom CDN cdn.bre.im). Link pattern: /proprietes/
+  // {rooms}pieces-{slug}-{id}. Uses the dedicated /louer page, NOT the
+  // homepage (which mixes Acheter/Louer/Location Saisonnière). Confirmed
+  // a "Loué" badge appears as a SEPARATE sibling element next to the
+  // listing link, not inline within it — verified via a real DOM test
+  // (jsdom) that the shared isAlreadyRented filter in scrape-runner.js
+  // still catches this correctly because the container-walk picks up
+  // the sibling badge into the same text block. Also lists international
+  // properties (London in GBP) alongside French ones — fine to leave
+  // in, as currency symbol differs and parseListingText's price regex
+  // is € specific, so GBP listings will simply have a null price rather
+  // than a wrong one.
+  'Breteuil Homes': {
+    url: 'https://breteuilhomes.com/louer',
+    waitForSelector: 'a[href*="/proprietes/"]',
+    extract: () => {
+      const results = [];
+      const links = Array.from(document.querySelectorAll('a[href*="/proprietes/"]'));
+      const seen = new Set();
+      for (const link of links) {
+        const href = link.href;
+        if (seen.has(href)) continue;
+        seen.add(href);
+        let container = link.closest('div') || link.parentElement;
+        for (let i = 0; i < 3 && container && container.innerText.length < 20; i++) {
+          container = container.parentElement;
+        }
+        const text = container ? container.innerText.replace(/\s+/g, ' ').trim() : '';
+        results.push({ url: href, rawText: text.slice(0, 300) });
+      }
+      return results;
+    },
+  },
 };
 
 module.exports = { SCRAPER_CONFIG };
