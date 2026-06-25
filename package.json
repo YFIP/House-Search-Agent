@@ -1,8 +1,9 @@
 {
-  "name": "prospector-functions",
+  "name": "prospector-barnes",
   "version": "1.0.0",
-  "description": "Netlify functions for Prospector — includes Catalyst SmartBrowz scraping support.",
+  "description": "Barnes scraper",
   "dependencies": {
-    "puppeteer-core": "^23.0.0"
+    "puppeteer": "^25.2.1",
+    "puppeteer-core": "^25.2.1"
   }
 }

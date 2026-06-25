@@ -1,0 +1,55 @@
+{
+  "timestamp": "2026-06-25T13:37:56.087Z",
+  "sources": {
+    "barnes-international": [
+      {
+        "source": "barnes-international",
+        "type": "rental",
+        "price": 12000,
+        "address": "Paris"
+      },
+      {
+        "source": "barnes-international",
+        "type": "rental",
+        "price": 2500,
+        "address": "Paris"
+      },
+      {
+        "source": "barnes-international",
+        "type": "rental",
+        "price": 15000,
+        "address": "Paris"
+      },
+      {
+        "source": "barnes-international",
+        "type": "rental",
+        "price": 12500,
+        "address": "Paris"
+      },
+      {
+        "source": "barnes-international",
+        "type": "rental",
+        "price": 12500,
+        "address": "Paris"
+      },
+      {
+        "source": "barnes-international",
+        "type": "rental",
+        "price": 12500,
+        "address": "Paris"
+      },
+      {
+        "source": "barnes-international",
+        "type": "rental",
+        "price": 10500,
+        "address": "Paris"
+      },
+      {
+        "source": "barnes-international",
+        "type": "rental",
+        "price": 10350,
+        "address": "Paris"
+      }
+    ]
+  }
+}
