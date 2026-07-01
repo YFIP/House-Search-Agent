@@ -1,9 +1,0 @@
-{
-  "name": "prospector-barnes",
-  "version": "1.0.0",
-  "description": "Barnes scraper",
-  "dependencies": {
-    "puppeteer": "^25.2.1",
-    "puppeteer-core": "^25.2.1"
-  }
-}
