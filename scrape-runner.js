@@ -28,11 +28,13 @@ async function getBrowser() {
   const browser = await puppeteer.launch({
     headless: true,
     defaultViewport: { width: 1920, height: 1080 },
-    // Defensive flags for stability under sustained page open/close churn
-    // (100 detail pages in one session) — --disable-dev-shm-usage in
-    // particular is a well-known fix for Chrome instability when repeatedly
-    // opening/closing pages, since /dev/shm is often too small by default.
-    args: ['--disable-dev-shm-usage', '--disable-gpu']
+    // --no-sandbox / --disable-setuid-sandbox are required on GitHub
+    // Actions' Ubuntu runners — their AppArmor policy blocks Chrome's
+    // normal sandbox from launching at all otherwise ("No usable
+    // sandbox!" error). Standard, low-risk practice specifically for
+    // ephemeral CI containers that only scrape known sites — not
+    // something you'd want on a shared, persistent machine.
+    args: ['--disable-dev-shm-usage', '--disable-gpu', '--no-sandbox', '--disable-setuid-sandbox']
   });
   return { browser, mode: 'local' };
 }
