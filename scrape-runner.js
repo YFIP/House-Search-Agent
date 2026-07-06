@@ -17,26 +17,42 @@ async function getBrowser() {
 
   if (browserWSEndpoint) {
     const puppeteerCore = require('puppeteer-core');
-    const browser = await puppeteerCore.connect({
-      browserWSEndpoint,
-      defaultViewport: { width: 1920, height: 1080 }
-    });
+    const browser = await withTimeout(
+      puppeteerCore.connect({
+        browserWSEndpoint,
+        defaultViewport: { width: 1920, height: 1080 }
+      }),
+      30000,
+      'Connecting to remote browser (CATALYST_CDP_URL)'
+    );
     return { browser, mode: 'remote' };
   }
 
   const puppeteer = require('puppeteer');
-  const browser = await puppeteer.launch({
-    headless: true,
-    defaultViewport: { width: 1920, height: 1080 },
-    // --no-sandbox / --disable-setuid-sandbox are required on GitHub
-    // Actions' Ubuntu runners — their AppArmor policy blocks Chrome's
-    // normal sandbox from launching at all otherwise ("No usable
-    // sandbox!" error). Standard, low-risk practice specifically for
-    // ephemeral CI containers that only scrape known sites — not
-    // something you'd want on a shared, persistent machine.
-    args: ['--disable-dev-shm-usage', '--disable-gpu', '--no-sandbox', '--disable-setuid-sandbox']
-  });
+  const browser = await withTimeout(
+    puppeteer.launch({
+      headless: true,
+      defaultViewport: { width: 1920, height: 1080 },
+      args: ['--disable-dev-shm-usage', '--disable-gpu', '--no-sandbox', '--disable-setuid-sandbox']
+    }),
+    30000,
+    'Launching local Chrome via Puppeteer'
+  );
   return { browser, mode: 'local' };
+}
+
+// Wraps any promise with a hard timeout — used specifically for browser
+// launch/connect, which had NO timeout protection before. Every other wait
+// in this file (navigation, selectors, clicks) already had one; a hang
+// during launch itself could previously run forever with nothing to catch
+// it, only stopped by GitHub Actions' own 6-hour job ceiling.
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`Timed out after ${ms}ms: ${label}`)), ms)
+    )
+  ]);
 }
 
 async function dismissCookieBanner(page) {
