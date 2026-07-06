@@ -129,7 +129,9 @@ async function main() {
   console.log(`This filename never changes — each run overwrites it, same download link every time.`);
 }
 
-main().catch(err => {
-  console.error('Fatal error:', err);
-  process.exit(1);
-});
+main()
+  .then(() => process.exit(0))
+  .catch(err => {
+    console.error('Fatal error:', err);
+    process.exit(1);
+  });
