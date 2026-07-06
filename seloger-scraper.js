@@ -36,13 +36,26 @@ const LISTING_SELECTOR = 'a[href*="/annonces/locations/"]';
 
 async function getBrowser() {
   const puppeteer = require('puppeteer');
-  return puppeteer.launch({
-    headless: true,
-    defaultViewport: { width: 1920, height: 1080 },
-    // Same fix as scrape-runner.js — required for Chrome to launch at all
-    // on GitHub Actions' Ubuntu runners.
-    args: ['--disable-dev-shm-usage', '--disable-gpu', '--no-sandbox', '--disable-setuid-sandbox']
-  });
+  return withTimeout(
+    puppeteer.launch({
+      headless: true,
+      defaultViewport: { width: 1920, height: 1080 },
+      args: ['--disable-dev-shm-usage', '--disable-gpu', '--no-sandbox', '--disable-setuid-sandbox']
+    }),
+    30000,
+    'Launching local Chrome via Puppeteer (SeLoger)'
+  );
+}
+
+// Same fix as scrape-runner.js — browser launch previously had no timeout
+// protection at all, unlike every other wait in this file.
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`Timed out after ${ms}ms: ${label}`)), ms)
+    )
+  ]);
 }
 
 function extractListings() {
