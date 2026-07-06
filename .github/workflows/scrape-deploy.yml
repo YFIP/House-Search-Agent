@@ -1,0 +1,63 @@
+name: Scrape and Deploy Listings
+
+on:
+  schedule:
+    - cron: '0 8 * * 1'   # 8:00 AM UTC every Monday
+  workflow_dispatch:       # lets you trigger a run manually from GitHub's UI
+
+# Needed so this workflow is allowed to commit the generated Excel file
+# back to the repo and publish it via Pages.
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install puppeteer exceljs
+
+      - name: Run scraper and generate Excel
+        run: node generate-listing-excel.js rent
+
+      # Commits listings.xlsx back to the repo under its FIXED filename.
+      # This is a normal "modify existing file" commit every run — not a
+      # new dated file each day — so the repo's history shows the file
+      # changing over time, same path/filename always.
+      - name: Commit updated Excel file to repo
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add listings.xlsx
+          git commit -m "Update listings: $(date -u +'%Y-%m-%d %H:%M UTC')" || echo "No changes to commit"
+          git push
+
+      # Also publish it via Pages, so there's a stable public download URL
+      # (https://<user>.github.io/<repo>/listings.xlsx) that always serves
+      # today's file without anyone needing repo access.
+      - name: Prepare Pages output
+        run: |
+          mkdir -p _site
+          cp listings.xlsx _site/listings.xlsx
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: scrape
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
