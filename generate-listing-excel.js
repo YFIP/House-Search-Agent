@@ -33,12 +33,17 @@ async function main() {
     views: [{ state: 'frozen', ySplit: 1 }] // freeze header row
   });
 
-  const hasDetails = fetchDetails && data.listings.some(l => 'elevator' in l);
+  // No longer gated on the fetchDetails flag — SeLoger always enriches
+  // regardless of that flag (only Barnes' optional slow fetch respects it),
+  // so whether to show these columns should depend on whether the data
+  // actually has them, not on a flag that's now only half-relevant.
+  const hasDetails = data.listings.some(l => 'elevator' in l);
 
   const columns = [
     { header: 'Source', key: 'source', width: 12 },
     { header: 'Price (€)', key: 'price', width: 14 },
     { header: 'Rooms', key: 'rooms', width: 8 },
+    { header: 'Bathrooms', key: 'bathrooms', width: 10 },
     { header: 'm²', key: 'sqm', width: 8 },
     { header: '€/m²', key: 'pricePerSqm', width: 12 },
     { header: 'Address', key: 'address', width: 20 },
@@ -64,6 +69,7 @@ async function main() {
       source: l.source,
       price: l.priceOnRequest ? 'On request' : l.price,
       rooms: l.rooms,
+      bathrooms: l.bathrooms,
       sqm: l.sqm,
       address: l.address,
       url: l.url
