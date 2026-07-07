@@ -27,7 +27,7 @@ jobs:
         run: npm install puppeteer exceljs
 
       - name: Run scraper and generate Excel
-        run: node generate-listing-excel.js rent
+        run: node generate-listing-excel.js rent details
 
       # Commits listings.xlsx back to the repo under its FIXED filename.
       # This is a normal "modify existing file" commit every run — not a
