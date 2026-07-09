@@ -60,8 +60,14 @@ function parseListing(rawText) {
   const sqm = sqmMatch ? parseFloat(sqmMatch[1].replace(/\s/g, '').replace(',', '.')) : null;
 
   // ---- ADDRESS / ARRONDISSEMENT --------------------------------------------
+  // Added bare "e" (e.g. "Paris 6e") after real evidence: Junot writes
+  // arrondissements this way, not "ème"/"eme" like Barnes/SeLoger. Without
+  // it, this regex failed on most Junot listings, falling through to the
+  // "first line" fallback below — which for Junot's raw text is usually a
+  // listing badge ("EXCLUSIVITÉ") or property type ("APPARTEMENT"), not a
+  // location at all.
   let address = '';
-  const parisMatch = text.match(/Paris\s*\d{1,2}(?:er|ème|eme|th|st|nd|rd)\b/i);
+  const parisMatch = text.match(/Paris\s*\d{1,2}(?:er|ème|eme|e|th|st|nd|rd)\b/i);
   if (parisMatch) {
     address = parisMatch[0];
   } else {
@@ -75,8 +81,17 @@ function parseListing(rawText) {
     }
   }
   if (!address) {
+    // Fallback of last resort — skip lines that are clearly NOT an address:
+    // all-caps badges (EXCLUSIVITÉ, NOUVEAU), common property-type words,
+    // or a line that's PURELY a price fragment (not just "contains a €",
+    // since real address lines often mix location and price together —
+    // over-filtering on that basis was tested and found to wrongly reject
+    // legitimate lines).
+    const badgeWords = /^(exclusivit[ée]|nouveau|appartement|maison|studio|duplex|loft|new|price on request)$/i;
+    const priceOnlyLine = /^\d[\d\s.,]*\s*€\s*(\/\s*(mois|month))?\s*(charges? (comprises?|incluses?)|hors charges)?\s*$/i;
     const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 5);
-    address = lines[0] || '';
+    const usableLine = lines.find(l => !badgeWords.test(l) && !priceOnlyLine.test(l));
+    address = usableLine || lines[0] || '';
   }
 
   // ---- DERIVED FIELDS -----------------------------------------------------
