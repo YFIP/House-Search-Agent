@@ -150,9 +150,21 @@ async function enrichWithDetails(browser, listings) {
   });
 }
 
-async function scrapeTown(browser, town, searchType) {
+// FIXED — sequential-only processing (removing town-level concurrency)
+// did NOT fix the earlier bug: live evidence showed even fully sequential
+// runs still failed after town #2-3 (Suresnes, which worked before, now
+// also failed). This points to a different cause than nested concurrency:
+// ONE long-lived browser instance accumulating enough page-opens across
+// MANY towns (each town does its own listing page + ~20-30 detail-page
+// visits) eventually degrades — by town 3 we'd already done 100+ total
+// page opens on a single browser. Launching a FRESH browser per town
+// costs a little startup overhead (~1-2s each) but avoids any cumulative
+// degradation entirely, since each town starts with a clean browser.
+async function scrapeTown(town, searchType) {
+  let browser;
   let page;
   try {
+    browser = await getBrowser();
     page = await browser.newPage();
     await page.setDefaultNavigationTimeout(20000);
     const url = `https://www.seloger.com/recherche/location/appartement/ile-de-france/${town.slug}-${town.postal}/${town.geoCode}`;
@@ -179,30 +191,31 @@ async function scrapeTown(browser, town, searchType) {
 
     const enriched = await enrichWithDetails(browser, valid);
     await page.close();
+    await browser.close();
     return { slug: town.slug, listings: enriched, error: null };
 
   } catch (error) {
     if (page) { try { await page.close(); } catch (e) {} }
+    if (browser) { try { await browser.close(); } catch (e) {} }
     return { slug: town.slug, listings: [], error: error.message };
   }
 }
 
 async function scrapeSeLogerSuburbs(searchType = 'rent') {
-  let browser;
   try {
-    browser = await getBrowser();
     console.log(`[SeLoger-Suburbs] Scraping ${SUBURB_TOWNS.length} suburb towns...`);
 
     let completed = 0;
     const start = Date.now();
+    // Sequential (TOWN_CONCURRENCY=1) since each town now gets its own
+    // fresh browser — no benefit to overlapping them, and doing so would
+    // reintroduce the original nested-resource-usage risk.
     const results = await mapWithConcurrency(SUBURB_TOWNS, TOWN_CONCURRENCY, async (town) => {
-      const result = await scrapeTown(browser, town, searchType);
+      const result = await scrapeTown(town, searchType);
       completed++;
-      console.log(`[SeLoger-Suburbs] Progress: ${completed}/${SUBURB_TOWNS.length} (${town.slug}: ${result.listings.length} listings)`);
+      console.log(`[SeLoger-Suburbs] Progress: ${completed}/${SUBURB_TOWNS.length} (${town.slug}: ${result.listings.length} listings${result.error ? ', ERROR: ' + result.error : ''})`);
       return result;
     });
-
-    await browser.close();
 
     const allListings = [];
     const failedSlugs = [];
@@ -229,7 +242,6 @@ async function scrapeSeLogerSuburbs(searchType = 'rent') {
 
   } catch (error) {
     console.error(`[SeLoger-Suburbs] Fatal error: ${error.message}`);
-    if (browser) { try { await browser.close(); } catch (e) {} }
     return { source: 'SeLoger', searchType, listings: [], error: error.message };
   }
 }
