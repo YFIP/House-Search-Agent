@@ -152,7 +152,11 @@ async function scrapeTown(browser, town, searchType) {
 
     const raw = await collectWithPagination(page);
     await page.close();
-    return { slug: town.slug, listings: raw, error: null };
+    // Defensive cap: a live run showed one town (Ville-d'Avray) returning
+    // 120 listings — 5-10x every other town in this batch, and unexplained.
+    // Capping here bounds the worst case regardless of root cause; the
+    // anomaly itself is still worth investigating separately.
+    return { slug: town.slug, listings: raw.slice(0, MAX_LISTINGS_PER_TOWN), error: null };
 
   } catch (error) {
     if (page) { try { await page.close(); } catch (e) {} }
