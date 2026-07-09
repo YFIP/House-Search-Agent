@@ -262,4 +262,4 @@ async function scrapeSeLogerSuburbs(searchType = 'rent') {
   }
 }
 
-module.exports = { scrapeSeLogerSuburbs, SUBURB_TOWNS };
+module.exports = { scrapeSeLogerSuburbs, SUBURB_TOWNS, scrapeTown };
