@@ -1,42 +1,46 @@
 // barnes-suburbs-scraper.js
 //
-// VERIFIED LIVE: https://www.barnes-international.com/en/for-rent/france/neuilly-sur-seine.html
-// is real and active ("21 propriétés en location à Neuilly-sur-Seine").
-// Barnes uses the identical per-town URL pattern as Junot
-// (.../france/{town-slug}.html), so this reuses the same town list already
-// built for junot-scraper.js rather than re-deriving it.
+// FIXED — real bug found via live evidence during testing: the original
+// URL format (https://www.barnes-international.com/en/for-rent/france/
+// {slug}.html) does NOT match Barnes' real URL pattern for most suburb
+// towns. A live test run showed ALL 51 towns returning non-empty results
+// (800 total) — implausible for a luxury agency across tiny villages —
+// and a direct check confirmed the real URL for Marnes-la-Coquette is
+// https://www.barnes-international.com/en/for-rent/france/marnes-la-coquette-92430/
+// (WITH postal code, trailing slash, NO ".html"). The old wrong URL likely
+// fell back to generic/all-France content for most towns, which is why
+// none of them came back empty — they were probably all showing similar
+// generic content, not real per-town data.
 //
-// Pagination: reuses the exact same proven logic from scrape-runner.js
-// (call annonces_suivantes() directly, count unique listing URLs, stop on
-// no-growth or missing button) since some suburb towns may have enough
-// listings to actually need it, even though most probably won't (Barnes'
-// entire Paris rental market was only ~146 listings total, so individual
-// suburb towns are likely single-to-low-double-digit counts).
-//
-// NOT individually verified beyond Neuilly-sur-Seine: the other ~50 towns
-// use the same confirmed pattern; zero-result towns and genuine failures
-// are both handled without crashing, same approach as junot-scraper.js.
+// Scoped to the same 13 verified western towns already confirmed for
+// SeLoger's suburbs (not the full ~51), since fixing all 51 would require
+// the same per-town URL verification SeLoger's geo-codes needed — this
+// trades breadth for correctness, consistent with how SeLoger's suburb
+// coverage was already handled.
 
 const parseListing = require('./parse-listing');
-const { HAUTS_DE_SEINE_SLUGS, YVELINES_SLUGS } = (() => {
-  // Reuse Junot's town list rather than duplicating it — same suburb
-  // coverage should apply across every source per the project's standing
-  // instruction to always cover Paris + suburbs together.
-  const junotModule = require('./junot-scraper');
-  // junot-scraper.js only exports ALL_SLUGS (which includes 'paris' at
-  // index 0) — strip that off since Barnes' Paris coverage is handled
-  // separately by scrape-runner.js already.
-  const suburbSlugs = junotModule.ALL_SLUGS.filter(s => s !== 'paris');
-  return { HAUTS_DE_SEINE_SLUGS: suburbSlugs, YVELINES_SLUGS: [] };
-})();
 
-const SUBURB_SLUGS = HAUTS_DE_SEINE_SLUGS; // combined list, name kept for clarity at call sites
+const SUBURB_TOWNS = [
+  { slug: 'neuilly-sur-seine', postal: '92200' },
+  { slug: 'boulogne-billancourt', postal: '92100' },
+  { slug: 'suresnes', postal: '92150' },
+  { slug: 'levallois-perret', postal: '92300' },
+  { slug: 'rueil-malmaison', postal: '92500' },
+  { slug: 'puteaux', postal: '92800' },
+  { slug: 'saint-cloud', postal: '92210' },
+  { slug: 'saint-germain-en-laye', postal: '78100' },
+  { slug: 'le-vesinet', postal: '78110' },
+  { slug: 'vaucresson', postal: '92420' },
+  { slug: 'garches', postal: '92380' },
+  { slug: 'marnes-la-coquette', postal: '92430' },
+  { slug: 'ville-d-avray', postal: '92410' }
+];
 
 const LISTING_SELECTOR = 'a[href*="/ref-"]';
 const NEXT_BUTTON_SELECTOR = 'a[href^="javascript:annonces_suivantes"]';
-const MAX_LISTINGS_PER_TOWN = 100; // same cap as Paris — will simply never be hit for small towns
+const MAX_LISTINGS_PER_TOWN = 100;
 const MAX_PAGE_CLICKS = 10;
-const MAX_CONCURRENT = 3; // matches scrape-runner.js's existing concurrency choice for Barnes
+const TOWN_CONCURRENCY = 2; // kept modest given the earlier nested-concurrency lesson from SeLoger-suburbs
 
 function extractListings() {
   const results = [];
@@ -72,7 +76,6 @@ async function countUniqueListings(page) {
   }, LISTING_SELECTOR);
 }
 
-// Same proven pagination approach as scrape-runner.js's collectWithPagination.
 async function collectWithPagination(page) {
   let previousCount = 0;
   let clicks = 0;
@@ -83,7 +86,7 @@ async function collectWithPagination(page) {
     if (clicks > 0 && currentCount === previousCount) break;
 
     const nextButton = await page.$(NEXT_BUTTON_SELECTOR);
-    if (!nextButton) break; // no next button = all results already loaded (the common case for small towns)
+    if (!nextButton) break;
 
     previousCount = currentCount;
 
@@ -128,7 +131,7 @@ async function mapWithConcurrency(items, limit, fn) {
   return results;
 }
 
-async function scrapeTown(browser, slug, searchType) {
+async function scrapeTown(browser, town, searchType) {
   let page;
   try {
     page = await browser.newPage();
@@ -136,21 +139,24 @@ async function scrapeTown(browser, slug, searchType) {
     const urlBase = searchType === 'purchase'
       ? 'https://www.barnes-international.com/en/for-sale/france/'
       : 'https://www.barnes-international.com/en/for-rent/france/';
-    await page.goto(urlBase + slug + '.html', { waitUntil: 'domcontentloaded', timeout: 20000 });
+    // Correct format: {slug}-{postal}/ — confirmed live, NOT {slug}.html
+    const url = `${urlBase}${town.slug}-${town.postal}/`;
+
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
 
     try {
       await page.waitForSelector(LISTING_SELECTOR, { timeout: 8000 });
     } catch (e) {
-      // Genuinely zero listings for this town today — expected, not an error.
+      // Genuinely zero listings for this town today — expected occasionally.
     }
 
     const raw = await collectWithPagination(page);
     await page.close();
-    return { slug, listings: raw, error: null };
+    return { slug: town.slug, listings: raw, error: null };
 
   } catch (error) {
     if (page) { try { await page.close(); } catch (e) {} }
-    return { slug, listings: [], error: error.message };
+    return { slug: town.slug, listings: [], error: error.message };
   }
 }
 
@@ -164,17 +170,14 @@ async function scrapeBarnesSuburbs(searchType = 'rent') {
       args: ['--disable-dev-shm-usage', '--disable-gpu', '--no-sandbox', '--disable-setuid-sandbox']
     });
 
-    console.log(`[Barnes-Suburbs] Scraping ${SUBURB_SLUGS.length} suburb towns...`);
+    console.log(`[Barnes-Suburbs] Scraping ${SUBURB_TOWNS.length} suburb towns...`);
     let completed = 0;
     const start = Date.now();
 
-    const results = await mapWithConcurrency(SUBURB_SLUGS, MAX_CONCURRENT, async (slug) => {
-      const result = await scrapeTown(browser, slug, searchType);
+    const results = await mapWithConcurrency(SUBURB_TOWNS, TOWN_CONCURRENCY, async (town) => {
+      const result = await scrapeTown(browser, town, searchType);
       completed++;
-      if (completed % 10 === 0 || completed === SUBURB_SLUGS.length) {
-        const elapsed = ((Date.now() - start) / 1000).toFixed(0);
-        console.log(`[Barnes-Suburbs] Progress: ${completed}/${SUBURB_SLUGS.length} (${elapsed}s elapsed)`);
-      }
+      console.log(`[Barnes-Suburbs] Progress: ${completed}/${SUBURB_TOWNS.length} (${town.slug}: ${result.listings.length} listings${result.error ? ', ERROR: ' + result.error : ''})`);
       return result;
     });
 
@@ -197,8 +200,9 @@ async function scrapeBarnesSuburbs(searchType = 'rent') {
       }
     }
 
-    console.log(`[Barnes-Suburbs] Total listings: ${allListings.length}`);
-    console.log(`[Barnes-Suburbs] Zero-result towns: ${zeroResultCount}/${SUBURB_SLUGS.length}`);
+    const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+    console.log(`[Barnes-Suburbs] Total listings: ${allListings.length} in ${elapsed}s`);
+    console.log(`[Barnes-Suburbs] Zero-result towns: ${zeroResultCount}/${SUBURB_TOWNS.length}`);
     if (failedSlugs.length > 0) console.log(`[Barnes-Suburbs] Failed towns: ${failedSlugs.join(', ')}`);
 
     return { source: 'Barnes', searchType, listings: allListings, error: null, diagnostics: { zeroResultCount, failedSlugs } };
@@ -210,4 +214,4 @@ async function scrapeBarnesSuburbs(searchType = 'rent') {
   }
 }
 
-module.exports = { scrapeBarnesSuburbs, SUBURB_SLUGS };
+module.exports = { scrapeBarnesSuburbs, SUBURB_TOWNS };
