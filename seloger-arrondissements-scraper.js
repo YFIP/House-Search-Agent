@@ -30,7 +30,12 @@ const PARIS_ARRONDISSEMENTS = Array.from({ length: 20 }, (_, i) => {
   // arrondissement (2nd-20th) correctly uses "eme" per the 3 confirmed
   // real examples (7eme, 15eme, 16eme).
   const ordinal = n === 1 ? '1er' : `${n}eme`;
-  return { arrondissement: n, slug: `paris-${ordinal}-arrondissement-${postal}`, postal, geoCode };
+  // displayName matches the SAME "Paris Nème" format Barnes and SeLoger's
+  // main Paris scraper already use — cross-source consistency, per direct
+  // request, so sorting/grouping by address works the same way regardless
+  // of which agency a listing came from.
+  const displayName = n === 1 ? 'Paris 1er' : `Paris ${n}ème`;
+  return { arrondissement: n, slug: `paris-${ordinal}-arrondissement-${postal}`, postal, geoCode, displayName };
 });
 
 const LISTING_SELECTOR = 'a[href*="/annonces/locations/"]';
@@ -43,13 +48,6 @@ async function getBrowser() {
     defaultViewport: { width: 1920, height: 1080 },
     args: ['--disable-dev-shm-usage', '--disable-gpu', '--no-sandbox', '--disable-setuid-sandbox']
   });
-}
-
-function extractStatedCount() {
-  const text = document.title + ' ' + (document.querySelector('h1') ? document.querySelector('h1').innerText : '');
-  const match = text.match(/(\d[\d\s]*)\s*annonces/i);
-  if (!match) return null;
-  return parseInt(match[1].replace(/\s/g, ''), 10);
 }
 
 function extractListings() {
@@ -76,10 +74,17 @@ function extractListings() {
     }
   }
 
+  // FIXED — same real Puppeteer serialization bug found across all 3
+  // SeLoger scrapers: page.evaluate(extractListings) only sends THIS
+  // function's own source into the browser, not a separate
+  // extractStatedCount() function it referenced. Inlined here.
+  const titleText = document.title + ' ' + (document.querySelector('h1') ? document.querySelector('h1').innerText : '');
+  const countMatch = titleText.match(/(\d[\d\s]*)\s*annonces/i);
+  const statedCount = countMatch ? parseInt(countMatch[1].replace(/\s/g, ''), 10) : null;
+
   // Same contamination-cap fix as seloger-suburbs-scraper.js — caps to
   // the page's own stated count if we somehow picked up more (e.g. a
   // "nearby suggestions" filler section).
-  const statedCount = extractStatedCount();
   if (statedCount !== null && statedCount < results.length) {
     return results.slice(0, statedCount);
   }
@@ -163,6 +168,9 @@ async function scrapeArrondissement(arr, searchType) {
       listing.source = 'SeLoger';
       listing.searchType = searchType;
       listing.isExactListing = true;
+      // Override with the known arrondissement — we already know exactly
+      // which one this is, more reliable than re-deriving from noisy text.
+      listing.address = arr.displayName;
       return listing;
     });
     const valid = parsed.filter(l => l.price > 0 || l.priceOnRequest || l.address);
