@@ -1,35 +1,48 @@
 // parisrental-scraper.js
 //
 // VERIFIED LIVE:
-//   - https://en.parisrental.com/furnished-apartments/ (page 1) — "92
-//     results match your search", well within our normal per-source range.
-//   - https://en.parisrental.com/furnished-apartments/?page=2 through
-//     ?page=6 — simple URL-based pagination, same easy pattern as
-//     Book-a-Flat/Perenium.
-//   - Listing link pattern: individual listings live at
-//     /furnished-apartments/{slug}-{numeric-ref}, e.g.
-//     /furnished-apartments/4-bedrooms-furnished-rental-paris-59373 — no
-//     clean fixed prefix like other sources, so the filter here is "lives
-//     under /furnished-apartments/ AND ends in a hyphen+digits" (the ref
-//     number), which distinguishes real listings from the bare category
-//     page link itself.
-//   - SUBURBS ALREADY INCLUDED: Boulogne-Billancourt, Neuilly-sur-Seine,
-//     Levallois-Perret, Puteaux, Issy-les-Moulineaux, Versailles, and
-//     Courbevoie all appear as filter options alongside Paris districts —
-//     same situation as Book-a-Flat/Perenium, no separate suburb-specific
-//     scraping needed.
-//   - Address format: "Paris 16e - Avenue Victor Hugo" — bare "e" ordinal
-//     (matches Junot's format, already handled by the shared parser).
-//   - Price format: "Monthly rent €7,900" — no explicit "/month" suffix,
-//     but correctly falls through to the generic (non-rent-specific)
-//     price regex, which doesn't require one.
-//   - Room/sqm formats ("4 chambres", "180 m²") already match existing
-//     regex, no changes needed.
+//   - Furnished: https://en.parisrental.com/furnished-apartments/ — "92
+//     results match your search". Individual listings live under
+//     /furnished-apartments/{slug}-{numeric-ref}.
+//   - Unfurnished: https://en.parisrental.com/rent-unfurnished-apartments-paris/
+//     — only "1 results match your search" (tiny category). IMPORTANT:
+//     individual listings here live under a DIFFERENT prefix,
+//     /empty-apartments/{slug}-{numeric-ref} — e.g.
+//     /empty-apartments/3-bedrooms-unfurnished-rental-paris-luxembourg-62940.
+//     Confirmed by directly checking the page rather than assuming the
+//     same prefix as furnished — it would have silently returned 0.
+//   - Pagination: simple URL-based (?page=2 etc.), same for both categories.
+//   - SUBURBS ALREADY INCLUDED in both categories (Boulogne-Billancourt,
+//     Neuilly-sur-Seine, Levallois-Perret, Puteaux, Issy-les-Moulineaux,
+//     Versailles, Courbevoie all appear as filter options).
+//   - Address format: "Paris 16e - Avenue Victor Hugo" — bare "e" ordinal,
+//     already handled by the shared parser.
+//   - Price format: "Monthly rent €7,900" — falls through correctly to
+//     the generic price regex.
+//   - Room/sqm formats identical between furnished and unfurnished
+//     categories, confirmed via the real unfurnished listing snippet.
+//   - Fixed a real 403 block found via live testing: Puppeteer's default
+//     User-Agent contains "HeadlessChrome", which this site's basic
+//     bot-blocking rule rejects outright — even from a home IP, ruling
+//     out simple IP-based blocking. A realistic User-Agent override
+//     fixes it (confirmed live).
 
 const parseListing = require('./parse-listing');
 
-const BASE_URL = 'https://en.parisrental.com/furnished-apartments/';
-const MAX_PAGES = 8; // safety margin above the ~6-7 pages actually observed
+const CATEGORIES = [
+  {
+    name: 'furnished',
+    baseUrl: 'https://en.parisrental.com/furnished-apartments/',
+    linkPrefix: '/furnished-apartments/'
+  },
+  {
+    name: 'unfurnished',
+    baseUrl: 'https://en.parisrental.com/rent-unfurnished-apartments-paris/',
+    linkPrefix: '/empty-apartments/'
+  }
+];
+
+const MAX_PAGES = 8; // safety margin above the ~6-7 pages actually observed for furnished
 
 async function getBrowser() {
   const puppeteer = require('puppeteer');
@@ -40,15 +53,17 @@ async function getBrowser() {
   });
 }
 
-function extractListings() {
+// linkPrefix passed as an argument (not captured from outer scope) — a
+// real Puppeteer serialization lesson learned earlier this project:
+// page.evaluate(fn) only sends fn's own source, not any outer-scope
+// variables it references, unless passed explicitly as an argument.
+function extractListings(linkPrefix) {
   const results = [];
   const seen = new Set();
-  // Must live under /furnished-apartments/ AND end in a hyphen+digits
-  // (the ref number) — distinguishes real listing links from the bare
-  // category page link ("View all rental apartments" points to the exact
-  // same /furnished-apartments/ URL with nothing after it).
-  const links = Array.from(document.querySelectorAll('a[href*="/furnished-apartments/"]'))
-    .filter(l => /\/furnished-apartments\/.+-\d+\/?$/.test(l.href));
+  const escapedPrefix = linkPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(escapedPrefix.replace(/\\\//g, '/') + '.+-\\d+/?$');
+  const links = Array.from(document.querySelectorAll(`a[href*="${linkPrefix}"]`))
+    .filter(l => pattern.test(l.href));
 
   for (const link of links) {
     const href = link.href;
@@ -72,6 +87,52 @@ function extractListings() {
   return results;
 }
 
+async function scrapeCategory(browser, category, searchType, seenUrls, allListings) {
+  for (let pageNum = 1; pageNum <= MAX_PAGES; pageNum++) {
+    const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'); // fixes 403 blocks from bot-detection checking for the default 'HeadlessChrome' signature (confirmed root cause via live ParisRental testing)
+    await page.setDefaultNavigationTimeout(20000);
+    const url = pageNum === 1 ? category.baseUrl : `${category.baseUrl}?page=${pageNum}`;
+
+    console.log(`[ParisRental] Navigating to ${url}`);
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+
+    try {
+      await page.waitForSelector(`a[href*="${category.linkPrefix}"]`, { timeout: 10000 });
+    } catch (e) {
+      console.log(`[ParisRental] [${category.name}] No listings found on page ${pageNum} — assuming end of results.`);
+      await page.close();
+      break;
+    }
+
+    const raw = await page.evaluate(extractListings, category.linkPrefix);
+    console.log(`[ParisRental] [${category.name}] Page ${pageNum}: ${raw.length} raw items`);
+
+    let newCount = 0;
+    for (const item of raw) {
+      if (seenUrls.has(item.url)) continue;
+      seenUrls.add(item.url);
+      const listing = parseListing(item.rawText);
+      listing.url = item.url;
+      listing.source = 'ParisRental';
+      listing.searchType = searchType;
+      listing.isExactListing = true;
+      allListings.push(listing);
+      newCount++;
+    }
+    await page.close();
+
+    if (newCount === 0) {
+      console.log(`[ParisRental] [${category.name}] Page ${pageNum} had no new listings — stopping this category.`);
+      break;
+    }
+    if (allListings.length >= 100) {
+      console.log(`[ParisRental] Reached 100-listing cap — stopping.`);
+      return;
+    }
+  }
+}
+
 async function scrapeParisRental(searchType = 'rent') {
   let browser;
   try {
@@ -79,47 +140,9 @@ async function scrapeParisRental(searchType = 'rent') {
     const allListings = [];
     const seenUrls = new Set();
 
-    for (let pageNum = 1; pageNum <= MAX_PAGES; pageNum++) {
-      const page = await browser.newPage();
-      await page.setDefaultNavigationTimeout(20000);
-      const url = pageNum === 1 ? BASE_URL : `${BASE_URL}?page=${pageNum}`;
-
-      console.log(`[ParisRental] Navigating to ${url}`);
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
-
-      try {
-        await page.waitForSelector('a[href*="/furnished-apartments/"]', { timeout: 10000 });
-      } catch (e) {
-        console.log(`[ParisRental] No listings found on page ${pageNum} — assuming end of results.`);
-        await page.close();
-        break;
-      }
-
-      const raw = await page.evaluate(extractListings);
-      console.log(`[ParisRental] Page ${pageNum}: ${raw.length} raw items`);
-
-      let newCount = 0;
-      for (const item of raw) {
-        if (seenUrls.has(item.url)) continue;
-        seenUrls.add(item.url);
-        const listing = parseListing(item.rawText);
-        listing.url = item.url;
-        listing.source = 'ParisRental';
-        listing.searchType = searchType;
-        listing.isExactListing = true;
-        allListings.push(listing);
-        newCount++;
-      }
-      await page.close();
-
-      if (newCount === 0) {
-        console.log(`[ParisRental] Page ${pageNum} had no new listings — stopping.`);
-        break;
-      }
-      if (allListings.length >= 100) {
-        console.log(`[ParisRental] Reached 100-listing cap — stopping.`);
-        break;
-      }
+    for (const category of CATEGORIES) {
+      if (allListings.length >= 100) break;
+      await scrapeCategory(browser, category, searchType, seenUrls, allListings);
     }
 
     await browser.close();
