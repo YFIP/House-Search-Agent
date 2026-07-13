@@ -63,7 +63,7 @@ async function runSource(label, promiseFactory, results, sourceStatus) {
 }
 
 async function combineAllSources(searchType = 'rent', options = {}) {
-  const { fetchDetails = false, excludeSeLogerSuburbs = false, externalListings = [], externalSourceStatus = [] } = options;
+  const { fetchDetails = false, excludeSeLogerSuburbs = false, excludeParisRental = false, externalListings = [], externalSourceStatus = [] } = options;
   const results = [...externalListings];
   const sourceStatus = [...externalSourceStatus];
 
@@ -102,12 +102,16 @@ async function combineAllSources(searchType = 'rent', options = {}) {
   if (searchType === 'rent') {
     await runSource('Book-a-Flat', () => scrapeBookAFlat(searchType), results, sourceStatus);
     await runSource('Perenium', () => scrapePerenium(searchType), results, sourceStatus);
-    await runSource('ParisRental', () => scrapeParisRental(searchType), results, sourceStatus);
+    if (!excludeParisRental) {
+      await runSource('ParisRental', () => scrapeParisRental(searchType), results, sourceStatus);
+    }
     await runSource('DanielFeau', () => scrapeDanielFeau(searchType), results, sourceStatus);
   } else {
     sourceStatus.push({ source: 'Book-a-Flat', found: 0, error: 'Purchase not yet verified for Book-a-Flat' });
     sourceStatus.push({ source: 'Perenium', found: 0, error: 'Purchase not yet verified for Perenium' });
-    sourceStatus.push({ source: 'ParisRental', found: 0, error: 'Purchase not yet verified for ParisRental' });
+    if (!excludeParisRental) {
+      sourceStatus.push({ source: 'ParisRental', found: 0, error: 'Purchase not yet verified for ParisRental' });
+    }
     sourceStatus.push({ source: 'DanielFeau', found: 0, error: 'Purchase not yet verified for DanielFeau' });
   }
 
