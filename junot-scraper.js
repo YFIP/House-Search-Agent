@@ -59,6 +59,22 @@ const YVELINES_SLUGS = [
 
 const ALL_SLUGS = [PARIS_SLUG, ...HAUTS_DE_SEINE_SLUGS, ...YVELINES_SLUGS];
 
+// Converts a URL slug into a readable display name for consistency across
+// sources — e.g. "saint-germain-en-laye" -> "Saint-Germain-en-Laye". Common
+// French connector words stay lowercase (matching real place-name
+// convention) unless they're the first word. Not a perfect French-grammar
+// engine, but consistent, which is what actually matters for sorting.
+const LOWERCASE_PARTICLES = new Set(['sur', 'en', 'la', 'le', 'les', 'de', 'des', 'du', 'et', "d'"]);
+function slugToDisplayName(slug) {
+  const words = slug.split('-');
+  return words
+    .map((w, i) => {
+      if (i > 0 && LOWERCASE_PARTICLES.has(w)) return w;
+      return w.charAt(0).toUpperCase() + w.slice(1);
+    })
+    .join('-');
+}
+
 const MAX_CONCURRENT = 4;
 
 async function getBrowser() {
@@ -176,12 +192,20 @@ async function scrapeJunot(searchType = 'rent') {
         zeroResultCount++;
         continue;
       }
+      // The "paris" slug is an aggregate covering all 20 arrondissements
+      // in one page — keep real text-based address parsing there, since
+      // we don't know in advance which arrondissement each listing is in.
+      // Every OTHER slug is one specific suburb town, so override with
+      // the known name — more reliable and consistent than re-deriving it
+      // from noisy card text (same fix applied to Barnes/SeLoger suburbs).
+      const knownAddress = r.slug === PARIS_SLUG ? null : slugToDisplayName(r.slug);
       for (const item of r.listings) {
         const listing = parseListing(item.rawText);
         listing.url = item.url;
         listing.source = 'Junot';
         listing.searchType = searchType;
         listing.isExactListing = true;
+        if (knownAddress) listing.address = knownAddress;
         allListings.push(listing);
       }
     }
