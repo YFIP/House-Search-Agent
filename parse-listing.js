@@ -120,10 +120,15 @@ function parseListing(rawText) {
     // since real address lines often mix location and price together —
     // over-filtering on that basis was tested and found to wrongly reject
     // legitimate lines).
-    const badgeWords = /^(exclusivit[ée]|nouveau|appartement|maison|studio|duplex|loft|new|price on request)$/i;
+    const badgeWords = /^(exclusivit[ée]|nouveau|appartement|maison|studio|duplex|loft|new|price on request|furnished apartment for rent|unfurnished apartment for rent)$/i;
     const priceOnlyLine = /^\d[\d\s.,]*\s*€\s*(\/\s*(mois|month))?\s*(charges? (comprises?|incluses?)|hors charges)?\s*$/i;
+    // Found via ParisRental: "Ref. 58221" is consistently the first line of
+    // raw card text and is never a location — same class of fix as
+    // badgeWords/priceOnlyLine, filtering out a known non-address pattern
+    // rather than blindly trusting whatever line comes first.
+    const refNumberLine = /^ref\.?\s*\d+$/i;
     const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 5);
-    const usableLine = lines.find(l => !badgeWords.test(l) && !priceOnlyLine.test(l));
+    const usableLine = lines.find(l => !badgeWords.test(l) && !priceOnlyLine.test(l) && !refNumberLine.test(l));
     address = usableLine || lines[0] || '';
   }
 
