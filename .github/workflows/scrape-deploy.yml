@@ -21,7 +21,7 @@ jobs:
         with:
           node-version: '20'
       - name: Install dependencies
-        run: npm install puppeteer exceljs
+        run: npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth exceljs
       - name: Scrape main sources (excludes SeLoger-Suburbs)
         run: node scrape-main-sources.js rent details
       - name: Upload main sources output
@@ -63,7 +63,7 @@ jobs:
         with:
           node-version: '20'
       - name: Install dependencies
-        run: npm install puppeteer
+        run: npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth
       - name: Scrape ${{ matrix.town }} in isolation
         run: node scrape-single-seloger-suburb.js ${{ matrix.town }}
       - name: Upload ${{ matrix.town }} result
@@ -91,7 +91,7 @@ jobs:
         with:
           node-version: '20'
       - name: Install dependencies
-        run: npm install puppeteer
+        run: npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth
       - name: Scrape arrondissement ${{ matrix.arr }} in isolation
         run: node scrape-single-seloger-arrondissement.js ${{ matrix.arr }}
       - name: Upload arrondissement ${{ matrix.arr }} result
