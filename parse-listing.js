@@ -72,13 +72,23 @@ function parseListing(rawText) {
   }
 
   // ---- ROOMS / BEDROOMS ----------------------------------------------------
-  const bedroomsMatch = text.match(/(\d+)\s*(?:bedrooms?|chambres?)\b/i);
+  // Trailing \b replaced with (?![a-zA-Z]) after a real bug found via
+  // DanielFeau: their text concatenates adjacent counts with no space
+  // ("4 pièces2 chambres" — no space between "pièces" and "2"). A \b
+  // boundary doesn't exist between a letter and a following digit (both
+  // count as "word" characters to regex), so the old pattern silently
+  // failed to match "4 pièces" here at all — and since roomsMatch failing
+  // makes the code fall back to using the BEDROOM count as a stand-in for
+  // rooms, the real room count was silently lost, not just misparsed.
+  // (?![a-zA-Z]) still rejects false matches like "piecework" (followed by
+  // a letter) while allowing a following digit or space through.
+  const bedroomsMatch = text.match(/(\d+)\s*(?:bedrooms?|chambres?)(?![a-zA-Z])/i);
   const bedrooms = bedroomsMatch ? parseInt(bedroomsMatch[1], 10) : null;
 
-  const roomsMatch = text.match(/\bT(\d+)\b|\b(\d+)\s*(?:pi[eè]ces?|rooms?)\b/i);
+  const roomsMatch = text.match(/\bT(\d+)\b|\b(\d+)\s*(?:pi[eè]ces?|rooms?)(?![a-zA-Z])/i);
   const rooms = roomsMatch ? parseInt(roomsMatch[1] || roomsMatch[2], 10) : bedrooms;
 
-  const bathroomsMatch = text.match(/(\d+)\s*(?:bathrooms?|salles?\s+de\s+bains?)\b/i);
+  const bathroomsMatch = text.match(/(\d+)\s*(?:bathrooms?|salles?\s+de\s+bains?)(?![a-zA-Z])/i);
   const bathrooms = bathroomsMatch ? parseInt(bathroomsMatch[1], 10) : null;
 
   // ---- SURFACE -------------------------------------------------------------
