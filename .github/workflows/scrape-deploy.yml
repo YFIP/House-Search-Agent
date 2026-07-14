@@ -152,7 +152,7 @@ jobs:
         with:
           node-version: '20'
       - name: Install dependencies
-        run: npm install exceljs
+        run: npm install exceljs googleapis
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -160,6 +160,11 @@ jobs:
           merge-multiple: true
       - name: Merge and generate Excel
         run: node merge-and-generate.js rent artifacts
+      - name: Sync to Google Sheets
+        env:
+          GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+          GOOGLE_SHEET_ID: '1maB2BiEzEK2XwC-vVHJGJuigdLGSUi9Yyh3psVWHt_I'
+        run: node sync-to-google-sheets.js listings.json
       - name: Commit updated Excel file to repo
         run: |
           git config user.name "GitHub Actions"
