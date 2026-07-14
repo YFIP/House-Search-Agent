@@ -117,6 +117,10 @@ async function scrapeCategory(browser, category, searchType, seenUrls, allListin
       listing.source = 'ParisRental';
       listing.searchType = searchType;
       listing.isExactListing = true;
+      // Furnished status inferred directly from which category we
+      // scraped — 100% reliable, no text-parsing needed, since the site
+      // itself splits listings into these two categories.
+      listing.furnished = category.name === 'furnished';
       allListings.push(listing);
       newCount++;
     }
@@ -199,6 +203,7 @@ async function scrapeSinglePage(categoryName, pageNum, searchType = 'rent') {
       listing.source = 'ParisRental';
       listing.searchType = searchType;
       listing.isExactListing = true;
+      listing.furnished = category.name === 'furnished';
       return listing;
     });
 
