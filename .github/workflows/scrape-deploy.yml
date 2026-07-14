@@ -171,6 +171,9 @@ jobs:
         run: |
           mkdir -p _site
           cp listings.xlsx _site/listings.xlsx
+          cp listings.json _site/listings.json
+          cp index.html _site/index.html
+          cp normalize-area.js _site/normalize-area.js
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
