@@ -31,6 +31,7 @@
 //     DOM differs from what a markdown-converted fetch implied).
 
 const parseListing = require('./parse-listing');
+const { extractDetailFeatures } = require('./parse-listing');
 
 const BASE_URL = 'https://www.book-a-flat.com/en/search';
 const LISTING_SELECTOR = 'a[href*="/apartment-paris-"]';
@@ -113,6 +114,16 @@ async function scrapeBookAFlat(searchType = 'rent') {
         listing.source = 'Book-a-Flat';
         listing.searchType = searchType;
         listing.isExactListing = true;
+      // Applying the same detail-feature extraction directly on the raw
+      // summary text (same pattern proven for Junot/Eiffel Housing) -
+      // returns null honestly for fields not present in the text, picks
+      // up real data for fields that are.
+      const details = extractDetailFeatures(item.rawText);
+      if (listing.elevator == null) listing.elevator = details.elevator;
+      if (listing.balcony == null) listing.balcony = details.balcony;
+      if (listing.furnished == null) listing.furnished = details.furnished;
+      if (listing.bathrooms == null) listing.bathrooms = details.bathroomsFromDetail;
+      if (listing.bedrooms == null) listing.bedrooms = details.bedroomsFromDetail;
         allListings.push(listing);
         newCount++;
       }
