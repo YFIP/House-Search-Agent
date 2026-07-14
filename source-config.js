@@ -25,7 +25,15 @@ const SCRAPER_CONFIG = {
     extract: () => {
       const results = [];
       const seen = new Set();
-      const links = Array.from(document.querySelectorAll('a[href*="/ref-"]'));
+      // Filter to /france/ in the path — Barnes is a global luxury agency,
+      // and the same /ref-XXX.html URL pattern is used site-wide for EVERY
+      // country's listings, not just France. Without this filter, real
+      // evidence showed Dubai, Athens, London, Madrid, Budapest, and other
+      // international listings bleeding into what should be a Paris-only
+      // scrape (likely from a "you might also like" worldwide carousel on
+      // the page).
+      const links = Array.from(document.querySelectorAll('a[href*="/ref-"]'))
+        .filter(l => l.href.includes('/france/paris')); // tightened from '/france/' after finding Marseille/Lyon/Lille (other French cities) also bleeding in via the same carousel
 
       for (const link of links) {
         const href = link.href;
@@ -58,7 +66,15 @@ const SCRAPER_CONFIG = {
     extract: () => {
       const results = [];
       const seen = new Set();
-      const links = Array.from(document.querySelectorAll('a[href*="/ref-"]'));
+      // Filter to /france/ in the path — Barnes is a global luxury agency,
+      // and the same /ref-XXX.html URL pattern is used site-wide for EVERY
+      // country's listings, not just France. Without this filter, real
+      // evidence showed Dubai, Athens, London, Madrid, Budapest, and other
+      // international listings bleeding into what should be a Paris-only
+      // scrape (likely from a "you might also like" worldwide carousel on
+      // the page).
+      const links = Array.from(document.querySelectorAll('a[href*="/ref-"]'))
+        .filter(l => l.href.includes('/france/paris')); // tightened from '/france/' after finding Marseille/Lyon/Lille (other French cities) also bleeding in via the same carousel
 
       for (const link of links) {
         const href = link.href;
