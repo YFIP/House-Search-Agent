@@ -603,7 +603,14 @@
     wireControls();
 
     try {
-      const res = await fetch('listings.json', { cache: 'no-store' });
+      // Cache-busting query param added after a real issue found live:
+      // cache: 'no-store' only controls the BROWSER's own cache, not
+      // GitHub Pages' CDN layer, which can serve a stale cached copy of
+      // listings.json for a few minutes after each deployment regardless
+      // of client cache-control headers. Appending a changing query
+      // string forces every load to be treated as a genuinely different
+      // URL, sidestepping CDN caching entirely.
+      const res = await fetch('listings.json?t=' + Date.now(), { cache: 'no-store' });
       const data = await res.json();
       state.listings = data.listings || [];
       document.getElementById('meta-line').textContent =
