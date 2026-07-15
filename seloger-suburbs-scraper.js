@@ -217,6 +217,16 @@ async function scrapeTown(town, searchType) {
   let browser;
   let page;
   try {
+    // TEMPORARY SELF-TEST: verifies parseListing() behaves correctly
+    // inside THIS actual CI environment, using a known hardcoded string —
+    // isolates whether this is a genuine environment difference (Node
+    // version, encoding) versus something about how the real scraped
+    // text differs from what gets logged. Remove once diagnosed.
+    const selfTestText = '1 / 21\nNouveau\n2 940 € /mois \ncharges comprises\nAppartement à louer\n2 pièces\n·\n1 chambre\n·\n43 m²';
+    const selfTestResult = parseListing(selfTestText);
+    console.log(`[SELF-TEST] Hardcoded string parsed price: ${selfTestResult.price} (expect 2940)`);
+    console.log(`[SELF-TEST] Node version: ${process.version}`);
+
     browser = await getBrowser();
     page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'); // fixes 403 blocks from bot-detection checking for the default 'HeadlessChrome' signature (confirmed root cause via live ParisRental testing)
