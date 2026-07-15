@@ -2,7 +2,16 @@ name: Scrape and Deploy Listings
 
 on:
   schedule:
-    - cron: '0 8 * * 1'   # 8:00 AM UTC every Monday
+    # Two triggers covering both possible UTC times for 8 AM Paris time,
+    # since France alternates between CET (UTC+1, winter) and CEST
+    # (UTC+2, summer) — GitHub Actions cron only runs in UTC, so a single
+    # fixed time would be off by an hour for half the year. The
+    # check-schedule job below verifies which one is ACTUALLY correct
+    # right now (via the OS's own Europe/Paris timezone database, which
+    # handles the exact DST transition dates automatically) and skips
+    # the other.
+    - cron: '0 6 * * *'   # 8:00 AM CEST (summer/daylight time)
+    - cron: '0 7 * * *'   # 8:00 AM CET (winter/standard time)
   workflow_dispatch:
 
 permissions:
@@ -11,8 +20,36 @@ permissions:
   id-token: write
 
 jobs:
+  # Verifies it's genuinely 8 AM in Paris right now before anything else
+  # runs — necessary because both cron triggers above fire daily, but
+  # only one of them is actually correct for the current season. Always
+  # proceeds for manual (workflow_dispatch) runs regardless of time.
+  check-schedule:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - name: Check if it's actually 8 AM Paris time right now
+        id: check
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "Manually triggered — proceeding regardless of time."
+            exit 0
+          fi
+          CURRENT_PARIS_HOUR=$(TZ=Europe/Paris date +%H)
+          echo "Current Paris local hour: $CURRENT_PARIS_HOUR"
+          if [ "$CURRENT_PARIS_HOUR" = "08" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "Not actually 8 AM in Paris right now — skipping (the other seasonal trigger will run instead)."
+          fi
+
   # Runs Barnes, Barnes-Suburbs, Junot, and SeLoger (Paris) in one job, as before.
   scrape-main:
+    needs: check-schedule
+    if: needs.check-schedule.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -38,6 +75,8 @@ jobs:
   # in a session always succeed, #3+ never do, regardless of concurrency,
   # delay, or browser freshness tried within one process.
   scrape-seloger-suburb:
+    needs: check-schedule
+    if: needs.check-schedule.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     strategy:
@@ -79,6 +118,8 @@ jobs:
   # pagination strategies tried, all failed) by treating each
   # arrondissement as its own single-page "location" search instead.
   scrape-seloger-arrondissement:
+    needs: check-schedule
+    if: needs.check-schedule.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     strategy:
@@ -110,6 +151,8 @@ jobs:
   # isolated job still originates from the same GitHub IP range) — this
   # is a genuine experiment, not a confirmed fix.
   scrape-parisrental-page:
+    needs: check-schedule
+    if: needs.check-schedule.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     strategy:
@@ -143,7 +186,8 @@ jobs:
   # Downloads every artifact from all four jobs above, merges everything,
   # and writes/commits the final Excel file.
   merge-and-commit:
-    needs: [scrape-main, scrape-seloger-suburb, scrape-seloger-arrondissement, scrape-parisrental-page]
+    needs: [check-schedule, scrape-main, scrape-seloger-suburb, scrape-seloger-arrondissement, scrape-parisrental-page]
+    if: needs.check-schedule.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -184,7 +228,8 @@ jobs:
           path: _site
 
   deploy:
-    needs: merge-and-commit
+    needs: [check-schedule, merge-and-commit]
+    if: needs.check-schedule.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
