@@ -185,7 +185,20 @@ async function enrichWithDetails(browser, listings) {
     // Real evidence: SeLoger detail pages commonly state chambres
     // explicitly even when the summary card only shows pièces count —
     // fills in a real bedroom count instead of leaving it null.
-    const bedrooms = listing.bedrooms != null ? listing.bedrooms : d.bedroomsFromDetail;
+    // Sanity check added after a real contamination bug found live:
+    // bedroomsFromDetail sometimes picks up an UNRELATED property's room
+    // count from a detail page's own 'similar listings' sidebar (a studio
+    // showed rooms:1 but bedroomsFromDetail:5 — logically impossible,
+    // since bedrooms can never exceed the listing's own total room
+    // count). Rejecting values that fail this basic consistency check is
+    // safer than trying to guess exactly where on the page to stop
+    // reading, which risks cutting off the real Caractéristiques
+    // checklist if it happens to appear later on the page.
+    let bedroomsFromDetail = d.bedroomsFromDetail;
+    if (bedroomsFromDetail != null && listing.rooms != null && bedroomsFromDetail > listing.rooms) {
+      bedroomsFromDetail = null;
+    }
+    const bedrooms = listing.bedrooms != null ? listing.bedrooms : bedroomsFromDetail;
     return { ...listing, elevator: d.elevator, balcony: d.balcony, furnished: d.furnished, bathrooms, bedrooms };
   });
 }
@@ -226,6 +239,12 @@ async function scrapeTown(town, searchType) {
       listing.source = 'SeLoger';
       listing.searchType = searchType;
       listing.isExactListing = true;
+      // TEMPORARY DEBUG: see debug-logging note in
+      // seloger-arrondissements-scraper.js for why this exists.
+      if (listing.price === 0 && !listing.priceOnRequest) {
+        console.log(`[SeLoger-DEBUG] price=0 for ${item.url}`);
+        console.log(`[SeLoger-DEBUG] RAW TEXT: ${JSON.stringify(item.rawText)}`);
+      }
       // Override the parsed address with the KNOWN town name — we already
       // know exactly which town this is (it's the URL we chose), so this
       // is both more reliable and perfectly consistent than trying to
