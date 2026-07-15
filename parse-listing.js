@@ -45,23 +45,48 @@ function parseListing(rawText) {
   // this: requiring ONLY the grouped form broke plain numbers like
   // "50000 €/MONTH" (Book-a-Flat's actual format) entirely.
   //
-  // IMPORTANT: the separator is a literal space (" "), NOT the general
-  // \s whitespace class. A second real bug was found via Perenium: \s
+  // IMPORTANT: the separator includes literal space (" "), non-breaking
+  // space (U+00A0), and narrow no-break space (U+202F) — NOT the general
+  // \s whitespace class (see the newline-fusion bug note below for why).
+  // Real bug found via DanielFeau/SeLoger/Junot/Perenium simultaneously:
+  // French sites commonly render thousands separators as U+00A0 or
+  // U+202F for typographic reasons (preventing numbers from breaking
+  // across a line), not a plain ASCII space. Since the old character
+  // class only recognized literal " ", the "properly grouped" alternative
+  // silently failed to recognize "4\u00A0049" as one grouped number,
+  // falling through to the plain-digit-run alternative — which only
+  // matches the LAST group before €, discarding everything before it
+  // (reported as "4049 shows as 49"). This one shared-parser fix
+  // resolves the same bug across all 4 affected sources at once.
+  //
+  // A second real bug was found via Perenium: the general \s class
   // matches newlines too, so "...17.13 m2\n825 €..." (the trailing "2" of
   // "m2", a genuine line break, then the real price "825" on the next
   // line) satisfied the grouping pattern as "2\n825" — treating a line
   // break between two completely unrelated numbers as a thousands
-  // separator. Real separators are always same-line.
-  const PRICE_NUMBER = '(?:\\d{1,3}(?:[ .,]\\d{3})+|\\d+)';
+  // separator. Real separators are always same-line, hence the specific
+  // character list here rather than \s.
+  const SEP = ' \u00A0\u202F.,';
+  const PRICE_NUMBER = `(?:\\d{1,3}(?:[${SEP}]\\d{3})+|\\d+)`;
   const NO_DIGIT_BEFORE = '(?<!\\d)';
+  // Same-line-only whitespace for the connective tissue immediately
+  // around € (NOT \s, which matches newlines). Real bug found via live
+  // testing on Junot/SeLoger/Perenium/DanielFeau: text like
+  // "15 000 €\n\n120,00 m²" (price on one line, sqm on the next,
+  // separated by a blank line) let saleBefore's old \s* reach straight
+  // across that gap and grab "120" (the unrelated sqm value) as if it
+  // were "the price following this €". A genuine price and its currency
+  // symbol are always on the same visual line — restricting to
+  // space/tab only prevents reaching into a completely different field.
+  const SL = '[ \\t]*';
 
   if (!isPriceOnRequest) {
-    const rentAfter = text.match(new RegExp(`${NO_DIGIT_BEFORE}(${PRICE_NUMBER})\\s*€\\s*\\/\\s*(mois|month)`, 'i'));
-    const rentBefore = text.match(new RegExp(`€\\s*${NO_DIGIT_BEFORE}(${PRICE_NUMBER})\\s*\\/\\s*(mois|month)`, 'i'));
-    const saleAfter = text.match(new RegExp(`${NO_DIGIT_BEFORE}(${PRICE_NUMBER})\\s*€(?!\\s*\\d)`));
-    const saleBefore = text.match(new RegExp(`€\\s*${NO_DIGIT_BEFORE}(${PRICE_NUMBER})(?!\\s*(?:AED|\\$|USD|CHF|£|₪|¥))`, 'i'));
+    const rentAfter = text.match(new RegExp(`${NO_DIGIT_BEFORE}(${PRICE_NUMBER})${SL}€${SL}\\/${SL}(mois|month)`, 'i'));
+    const rentBefore = text.match(new RegExp(`€${SL}${NO_DIGIT_BEFORE}(${PRICE_NUMBER})${SL}\\/${SL}(mois|month)`, 'i'));
+    const saleAfter = text.match(new RegExp(`${NO_DIGIT_BEFORE}(${PRICE_NUMBER})${SL}€(?!${SL}\\d)`));
+    const saleBefore = text.match(new RegExp(`€${SL}${NO_DIGIT_BEFORE}(${PRICE_NUMBER})(?!${SL}(?:AED|\\$|USD|CHF|£|₪|¥))`, 'i'));
 
-    const toInt = (s) => parseInt(s.replace(/[\s.,]/g, ''), 10);
+    const toInt = (s) => parseInt(s.replace(new RegExp(`[${SEP}]`, 'g'), ''), 10);
 
     if (rentAfter) price = toInt(rentAfter[1]);
     else if (rentBefore) price = toInt(rentBefore[1]);
@@ -88,7 +113,7 @@ function parseListing(rawText) {
   const roomsMatch = text.match(/\bT(\d+)\b|\b(\d+)\s*(?:pi[eè]ces?|rooms?)(?![a-zA-Z])/i);
   const rooms = roomsMatch ? parseInt(roomsMatch[1] || roomsMatch[2], 10) : bedrooms;
 
-  const bathroomsMatch = text.match(/(\d+)\s*(?:bathrooms?|salles?\s+de\s+bains?)(?![a-zA-Z])/i);
+  const bathroomsMatch = text.match(/(\d+)\s*(?:bathrooms?|salles?\s+de\s+bains?|salles?\s+d'eau|wc|toilettes?)(?![a-zA-Z])/i);
   const bathrooms = bathroomsMatch ? parseInt(bathroomsMatch[1], 10) : null;
 
   // ---- SURFACE -------------------------------------------------------------
@@ -96,9 +121,15 @@ function parseListing(rawText) {
   // abbreviation exclusively ("263 sqm") — the old pattern only
   // recognized 'm²'/'m2', silently returning null for every listing from
   // this source.
-  const sqmMatch = text.match(/(\d[\d\s]*(?:[.,]\d+)?)\s*(?:m²|m2|sqm)\b(?!\w)/i) ||
-                    text.match(/(\d[\d\s]*(?:[.,]\d+)?)\s*(?:m²|m2|sqm)/i);
-  const sqm = sqmMatch ? parseFloat(sqmMatch[1].replace(/\s/g, '').replace(',', '.')) : null;
+  //
+  // Same-line-only whitespace fix (same class of bug as the price regex
+  // above): "...SAINT-VINCENT DE PAUL 5\n42.59 M2" (a street number "5"
+  // on one line, the real sqm "42.59" on the next) was matching as
+  // "5\n42" via the old [\d\s]* group, since \s matches newlines. Real
+  // evidence from Perenium live testing.
+  const sqmMatch = text.match(/(?<!\d)(\d[\d \t]*(?:[.,]\d+)?)[ \t]*(?:m²|m2|sqm)\b(?!\w)/i) ||
+                    text.match(/(?<!\d)(\d[\d \t]*(?:[.,]\d+)?)[ \t]*(?:m²|m2|sqm)/i);
+  const sqm = sqmMatch ? parseFloat(sqmMatch[1].replace(/[\s\t]/g, '').replace(',', '.')) : null;
 
   // ---- ADDRESS / ARRONDISSEMENT --------------------------------------------
   // Added bare "e" (e.g. "Paris 6e") after real evidence: Junot writes
@@ -238,8 +269,8 @@ function extractDetailFeatures(pageText) {
   // this is specifically for sources where bathroom count only appears
   // on the detail page.
   let bathroomsFromDetail = null;
-  const bathMatch = text.match(/(\d+)\s*salles?\s*(?:de)?\s*(?:bain|douche)s?/i)
-    || text.match(/(\d+)\s*bathrooms?\b/i);
+  const bathMatch = text.match(/(\d+)\s*salles?\s*(?:de)?\s*(?:bain|douche|d'eau)s?/i)
+    || text.match(/(\d+)\s*(?:bathrooms?|wc|toilettes?|sdb)\b/i);
   if (bathMatch) {
     bathroomsFromDetail = parseInt(bathMatch[1], 10);
   }
