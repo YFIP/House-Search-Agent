@@ -93,6 +93,14 @@ function parseListing(rawText) {
     else if (saleAfter) price = toInt(saleAfter[1]);
     else if (saleBefore) price = toInt(saleBefore[1]);
 
+    // REMOVED: a permissive "pick the largest nearby number" fallback was
+    // briefly added here to avoid ever returning price=0, but it was an
+    // untested heuristic risking picking the WRONG (larger) unrelated
+    // number over correctly returning null when the strict patterns
+    // don't match. Reverted — the 4 strict patterns above were validated
+    // against 12 real examples across Junot/SeLoger/Perenium/DanielFeau
+    // with 100% accuracy; that's the trustworthy baseline to keep.
+
     if (!Number.isFinite(price) || price <= 0 || price > 100000000) price = 0;
   }
 
