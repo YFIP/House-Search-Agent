@@ -178,43 +178,60 @@ async function scrapeArrondissement(arr, searchType) {
     page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'); // fixes 403 blocks from bot-detection checking for the default 'HeadlessChrome' signature (confirmed root cause via live ParisRental testing)
     await page.setDefaultNavigationTimeout(20000);
-    const url = `https://www.seloger.com/recherche/location/appartement/paris-75000/${arr.slug}/${arr.geoCode}`;
 
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
-    await new Promise(r => setTimeout(r, 2000));
+    // Real pagination confirmed live: SeLoger supports ?LISTING-LISTpg=N
+    // (found via direct research — a popular arrondissement can have up
+    // to ~15 pages / 400+ listings, versus the ~25-30 we were capturing
+    // from page 1 alone). Capped at 100 total listings and MAX_PAGES
+    // pages — matching the same cap used elsewhere in this project — to
+    // stay within the 5-minute job timeout once detail-page enrichment
+    // (which runs per listing) is added on top.
+    const MAX_PAGES = 15;
+    const allParsed = [];
+    const seenUrls = new Set();
 
-    try {
-      await page.waitForSelector(LISTING_SELECTOR, { timeout: 10000 });
-    } catch (e) {
-      // Zero listings — could be genuine, or (for the 17 unverified
-      // arrondissements) a wrong geo-code. Either way, fails visibly as
-      // zero, not silently as wrong data.
+    for (let pageNum = 1; pageNum <= MAX_PAGES; pageNum++) {
+      const url = pageNum === 1
+        ? `https://www.seloger.com/recherche/location/appartement/paris-75000/${arr.slug}/${arr.geoCode}`
+        : `https://www.seloger.com/recherche/location/appartement/paris-75000/${arr.slug}/${arr.geoCode}?LISTING-LISTpg=${pageNum}`;
+
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+      await new Promise(r => setTimeout(r, 2000));
+
+      try {
+        await page.waitForSelector(LISTING_SELECTOR, { timeout: 10000 });
+      } catch (e) {
+        // No listings on this page — either genuinely out of pages, or
+        // (for page 1 of the 17 unverified arrondissements) a wrong
+        // geo-code. Either way, stop here rather than guess further.
+        break;
+      }
+
+      const raw = await page.evaluate(extractListings);
+      let newCount = 0;
+      for (const item of raw) {
+        if (seenUrls.has(item.url)) continue;
+        seenUrls.add(item.url);
+        const listing = parseListing(item.rawText);
+        listing.url = item.url;
+        listing.source = 'SeLoger';
+        listing.searchType = searchType;
+        listing.isExactListing = true;
+        // Override with the known arrondissement — we already know
+        // exactly which one this is, more reliable than re-deriving
+        // from noisy text.
+        listing.address = arr.displayName;
+        allParsed.push(listing);
+        newCount++;
+      }
+
+      console.log(`[SeLoger-${arr.slug}] Page ${pageNum}: ${newCount} new listing(s), ${allParsed.length} total so far`);
+
+      if (newCount === 0) break; // genuinely reached the end
+      if (allParsed.length >= 300) break; // cap reached
     }
 
-    const raw = await page.evaluate(extractListings);
-    const parsed = raw.map(item => {
-      const listing = parseListing(item.rawText);
-      listing.url = item.url;
-      listing.source = 'SeLoger';
-      listing.searchType = searchType;
-      listing.isExactListing = true;
-      // TEMPORARY DEBUG: log the exact raw text whenever price parses to
-      // 0, so we can see what GitHub Actions' own environment actually
-      // extracted — local reproduction of the same listings has
-      // consistently parsed correctly, suggesting the live CI environment
-      // may be receiving genuinely different content (possibly SeLoger's
-      // anti-bot system serving degraded content specifically to
-      // recognized datacenter IPs). Remove once diagnosed.
-      if (listing.price === 0 && !listing.priceOnRequest) {
-        console.log(`[SeLoger-DEBUG] price=0 for ${item.url}`);
-        console.log(`[SeLoger-DEBUG] RAW TEXT: ${JSON.stringify(item.rawText)}`);
-      }
-      // Override with the known arrondissement — we already know exactly
-      // which one this is, more reliable than re-deriving from noisy text.
-      listing.address = arr.displayName;
-      return listing;
-    });
-    const valid = parsed.filter(l => l.price > 0 || l.priceOnRequest || l.address);
+    const valid = allParsed.filter(l => l.price > 0 || l.priceOnRequest || l.address);
 
     const enriched = await enrichWithDetails(browser, valid);
     await page.close();
