@@ -217,54 +217,63 @@ async function scrapeTown(town, searchType) {
   let browser;
   let page;
   try {
-    // TEMPORARY SELF-TEST: verifies parseListing() behaves correctly
-    // inside THIS actual CI environment, using a known hardcoded string —
-    // isolates whether this is a genuine environment difference (Node
-    // version, encoding) versus something about how the real scraped
-    // text differs from what gets logged. Remove once diagnosed.
-    const selfTestText = '1 / 21\nNouveau\n2 940 € /mois \ncharges comprises\nAppartement à louer\n2 pièces\n·\n1 chambre\n·\n43 m²';
-    const selfTestResult = parseListing(selfTestText);
-    console.log(`[SELF-TEST] Hardcoded string parsed price: ${selfTestResult.price} (expect 2940)`);
-    console.log(`[SELF-TEST] Node version: ${process.version}`);
-
     browser = await getBrowser();
     page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'); // fixes 403 blocks from bot-detection checking for the default 'HeadlessChrome' signature (confirmed root cause via live ParisRental testing)
     await page.setDefaultNavigationTimeout(20000);
-    const url = `https://www.seloger.com/recherche/location/appartement/ile-de-france/${town.slug}-${town.postal}/${town.geoCode}`;
 
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
-    await new Promise(r => setTimeout(r, 2000));
+    // Real pagination confirmed live via ?LISTING-LISTpg=N (see
+    // seloger-arrondissements-scraper.js for the full research note).
+    // Capped at 100 listings / MAX_PAGES pages to stay within the
+    // 5-minute job timeout once detail-page enrichment runs on top.
+    const MAX_PAGES = 15;
+    const allParsed = [];
+    const seenUrls = new Set();
 
-    try {
-      await page.waitForSelector(LISTING_SELECTOR, { timeout: 10000 });
-    } catch (e) {
-      // Genuinely zero listings for this town right now — expected occasionally.
+    for (let pageNum = 1; pageNum <= MAX_PAGES; pageNum++) {
+      const url = pageNum === 1
+        ? `https://www.seloger.com/recherche/location/appartement/ile-de-france/${town.slug}-${town.postal}/${town.geoCode}`
+        : `https://www.seloger.com/recherche/location/appartement/ile-de-france/${town.slug}-${town.postal}/${town.geoCode}?LISTING-LISTpg=${pageNum}`;
+
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+      await new Promise(r => setTimeout(r, 2000));
+
+      try {
+        await page.waitForSelector(LISTING_SELECTOR, { timeout: 10000 });
+      } catch (e) {
+        // Genuinely zero/out-of-pages for this town — expected occasionally.
+        break;
+      }
+
+      const raw = await page.evaluate(extractListings);
+      let newCount = 0;
+      for (const item of raw) {
+        if (seenUrls.has(item.url)) continue;
+        seenUrls.add(item.url);
+        const listing = parseListing(item.rawText);
+        listing.url = item.url;
+        listing.source = 'SeLoger';
+        listing.searchType = searchType;
+        listing.isExactListing = true;
+        // Override the parsed address with the KNOWN town name — we
+        // already know exactly which town this is (it's the URL we
+        // chose), so this is both more reliable and perfectly
+        // consistent than trying to re-derive it from noisy card text,
+        // which was shown to sometimes grab a floor number ("1 / 12"),
+        // postal code fragment, or agency name instead of a real
+        // location.
+        listing.address = town.displayName;
+        allParsed.push(listing);
+        newCount++;
+      }
+
+      console.log(`[SeLoger-${town.slug}] Page ${pageNum}: ${newCount} new listing(s), ${allParsed.length} total so far`);
+
+      if (newCount === 0) break;
+      if (allParsed.length >= 300) break;
     }
 
-    const raw = await page.evaluate(extractListings);
-    const parsed = raw.map(item => {
-      const listing = parseListing(item.rawText);
-      listing.url = item.url;
-      listing.source = 'SeLoger';
-      listing.searchType = searchType;
-      listing.isExactListing = true;
-      // TEMPORARY DEBUG: see debug-logging note in
-      // seloger-arrondissements-scraper.js for why this exists.
-      if (listing.price === 0 && !listing.priceOnRequest) {
-        console.log(`[SeLoger-DEBUG] price=0 for ${item.url}`);
-        console.log(`[SeLoger-DEBUG] RAW TEXT: ${JSON.stringify(item.rawText)}`);
-      }
-      // Override the parsed address with the KNOWN town name — we already
-      // know exactly which town this is (it's the URL we chose), so this
-      // is both more reliable and perfectly consistent than trying to
-      // re-derive it from noisy card text, which was shown to sometimes
-      // grab a floor number ("1 / 12"), postal code fragment, or agency
-      // name instead of a real location.
-      listing.address = town.displayName;
-      return listing;
-    });
-    const valid = parsed.filter(l => l.price > 0 || l.priceOnRequest || l.address);
+    const valid = allParsed.filter(l => l.price > 0 || l.priceOnRequest || l.address);
 
     const enriched = await enrichWithDetails(browser, valid);
     await page.close();
