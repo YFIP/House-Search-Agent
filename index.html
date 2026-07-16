@@ -311,7 +311,7 @@
 <main>
   <div class="area-panel">
     <h2>Where in Paris?</h2>
-    <p class="sub">Click an arrondissement below — they're arranged the way Paris itself spirals outward from the 1st, like a snail shell.</p>
+    <p class="sub">Click any number of arrondissements or suburbs below to select several at once — they're arranged the way Paris itself spirals outward from the 1st, like a snail shell.</p>
     <div class="spiral-wrap" id="spiral"></div>
     <div class="suburb-chips" id="suburb-chips"></div>
     <button class="clear-area" id="clear-area">Clear area filter</button>
@@ -410,7 +410,7 @@
   const ARR_COUNT = 20;
   const state = {
     listings: [],
-    filters: { area: null, source: '', minPrice: null, maxPrice: null, bedrooms: null, bathrooms: null, minSqm: null, maxSqm: null, elevator: false, furnished: false, balcony: false, search: '' },
+    filters: { areas: new Set(), source: '', minPrice: null, maxPrice: null, bedrooms: null, bathrooms: null, minSqm: null, maxSqm: null, elevator: false, furnished: false, balcony: false, search: '' },
     sort: { key: 'price', dir: 'asc' }
   };
 
@@ -454,19 +454,18 @@
   }
 
   function toggleAreaFilter(area, el) {
-    const already = state.filters.area === area;
-    document.querySelectorAll('.arr-chip.active, .suburb-chip.active').forEach(c => c.classList.remove('active'));
-    if (already) {
-      state.filters.area = null;
+    if (state.filters.areas.has(area)) {
+      state.filters.areas.delete(area);
+      el.classList.remove('active');
     } else {
-      state.filters.area = area;
+      state.filters.areas.add(area);
       el.classList.add('active');
     }
     render();
   }
 
   document.getElementById('clear-area').addEventListener('click', () => {
-    state.filters.area = null;
+    state.filters.areas.clear();
     document.querySelectorAll('.arr-chip.active, .suburb-chip.active').forEach(c => c.classList.remove('active'));
     render();
   });
@@ -484,9 +483,9 @@
 
   function matchesFilters(listing) {
     const f = state.filters;
-    if (f.area) {
+    if (f.areas.size > 0) {
       const listingArea = (listing.normalizedArea && listing.normalizedArea.area) || '';
-      if (listingArea !== f.area) return false;
+      if (!f.areas.has(listingArea)) return false;
     }
     if (f.source && listing.source !== f.source) return false;
     if (f.minPrice != null && (!listing.price || listing.price < f.minPrice)) return false;
