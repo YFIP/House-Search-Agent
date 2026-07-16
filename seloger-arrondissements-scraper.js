@@ -186,7 +186,7 @@ async function scrapeArrondissement(arr, searchType) {
     // and the geoCode UPPERCASED — verified across 5 pages returning 144
     // genuinely unique listings (28-30 new per page), not the same
     // content repeated.
-    const MAX_PAGES = 15;
+    const MAX_PAGES = 18;
     const allParsed = [];
     const seenUrls = new Set();
 
@@ -226,7 +226,7 @@ async function scrapeArrondissement(arr, searchType) {
       console.log(`[SeLoger-${arr.slug}] Page ${pageNum}: ${newCount} new listing(s), ${allParsed.length} total so far`);
 
       if (newCount === 0) break; // genuinely reached the end
-      if (allParsed.length >= 300) break; // cap reached
+      if (allParsed.length >= 450) break; // cap reached
     }
 
     const valid = allParsed.filter(l => l.price > 0 || l.priceOnRequest || l.address);
