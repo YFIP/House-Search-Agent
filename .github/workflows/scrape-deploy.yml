@@ -96,6 +96,14 @@ jobs:
           - garches
           - marnes-la-coquette
           - ville-d-avray
+          - courbevoie
+          - versailles
+          - issy-les-moulineaux
+          - colombes
+          - nanterre
+          - chatou
+          - croissy-sur-seine
+          - la-celle-saint-cloud
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
