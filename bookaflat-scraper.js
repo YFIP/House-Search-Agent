@@ -89,7 +89,13 @@ async function scrapeBookAFlat(searchType = 'rent') {
     for (let pageNum = 1; pageNum <= MAX_PAGES; pageNum++) {
       page = await browser.newPage();
       await page.setDefaultNavigationTimeout(20000);
-      const url = pageNum === 1 ? `${BASE_URL}.html` : `${BASE_URL}-${pageNum}.html`;
+      // Sale is a single fixed URL confirmed live (15 apartments, no
+      // pagination) — a completely different URL pattern from rent's
+      // search.html/search-N.html sequence, not just a parameter swap.
+      if (searchType === 'sale' && pageNum > 1) break;
+      const url = searchType === 'sale'
+        ? 'https://www.book-a-flat.com/en/property-for-sale.html'
+        : (pageNum === 1 ? `${BASE_URL}.html` : `${BASE_URL}-${pageNum}.html`);
 
       console.log(`[Book-a-Flat] Navigating to ${url}`);
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
@@ -108,6 +114,11 @@ async function scrapeBookAFlat(searchType = 'rent') {
       let newCount = 0;
       for (const item of raw) {
         if (seenUrls.has(item.url)) continue;
+        // Sale listings sometimes show a "sold" or "under preliminary
+        // sales agreement" status mixed into the same page as genuinely
+        // available ones — these aren't real inventory, so skip them
+        // rather than presenting them as available.
+        if (searchType === 'sale' && /\b(sold|under preliminary sales agreement)\b/i.test(item.rawText)) continue;
         seenUrls.add(item.url);
         const listing = parseListing(item.rawText);
         listing.url = item.url;
