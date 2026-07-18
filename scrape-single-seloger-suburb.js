@@ -22,8 +22,9 @@ const { scrapeTown, SUBURB_TOWNS } = require('./seloger-suburbs-scraper');
 
 async function main() {
   const slug = process.argv[2];
+  const searchType = process.argv[3] === 'sale' ? 'sale' : 'rent';
   if (!slug) {
-    console.error('Usage: node scrape-single-seloger-suburb.js <town-slug>');
+    console.error('Usage: node scrape-single-seloger-suburb.js <town-slug> [rent|sale]');
     process.exit(1);
   }
 
@@ -33,14 +34,14 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`[${slug}] Scraping in isolation (own process, own session)...`);
+  console.log(`[${slug}] Scraping ${searchType} in isolation (own process, own session)...`);
   const start = Date.now();
-  const result = await scrapeTown(town, 'rent');
+  const result = await scrapeTown(town, searchType);
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
 
   console.log(`[${slug}] Done in ${elapsed}s: ${result.listings.length} listings${result.error ? ', ERROR: ' + result.error : ''}`);
 
-  const filename = `output-seloger-${slug}.json`;
+  const filename = searchType === 'sale' ? `output-seloger-${slug}-sale.json` : `output-seloger-${slug}.json`;
   fs.writeFileSync(filename, JSON.stringify(result, null, 2));
   console.log(`[${slug}] Wrote ${filename}`);
 }
