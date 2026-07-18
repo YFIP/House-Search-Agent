@@ -38,7 +38,16 @@ const PARIS_ARRONDISSEMENTS = Array.from({ length: 20 }, (_, i) => {
   return { arrondissement: n, slug: `paris-${ordinal}-arrondissement-${postal}`, postal, geoCode, displayName };
 });
 
-const LISTING_SELECTOR = 'a[href*="/annonces/locations/"]';
+// Real bug found live: this was hardcoded to /annonces/locations/ (rent
+// only), causing every sale job to silently return 0 listings — the
+// selector never matched anything on a buy page (which uses
+// /annonces/achat/ instead), so waitForSelector always timed out and
+// the loop broke immediately, looking like "genuinely zero results"
+// rather than a wrong selector. Confirmed live: buy listing links use
+// /annonces/achat/appartement/... (e.g. .../ecole-militaire/274282375.htm).
+function getListingSelector(searchType) {
+  return searchType === 'sale' ? 'a[href*="/annonces/achat/"]' : 'a[href*="/annonces/locations/"]';
+}
 const DETAIL_FETCH_CONCURRENCY = 3;
 
 async function getBrowser() {
@@ -61,10 +70,11 @@ async function getBrowser() {
   });
 }
 
-function extractListings() {
+function extractListings(searchType) {
   const results = [];
   const seen = new Set();
-  const links = Array.from(document.querySelectorAll('a[href*="/annonces/locations/"]'));
+  const linkSelector = searchType === 'sale' ? 'a[href*="/annonces/achat/"]' : 'a[href*="/annonces/locations/"]';
+  const links = Array.from(document.querySelectorAll(linkSelector));
 
   for (const link of links) {
     const href = link.href;
@@ -186,7 +196,7 @@ async function scrapeArrondissement(arr, searchType) {
     // and the geoCode UPPERCASED — verified across 5 pages returning 144
     // genuinely unique listings (28-30 new per page), not the same
     // content repeated.
-    const MAX_PAGES = 18;
+    const MAX_PAGES = 30;
     const allParsed = [];
     const seenUrls = new Set();
 
@@ -198,7 +208,7 @@ async function scrapeArrondissement(arr, searchType) {
       await new Promise(r => setTimeout(r, 2000));
 
       try {
-        await page.waitForSelector(LISTING_SELECTOR, { timeout: 10000 });
+        await page.waitForSelector(getListingSelector(searchType), { timeout: 10000 });
       } catch (e) {
         // No listings on this page — either genuinely out of pages, or
         // (for page 1 of the 17 unverified arrondissements) a wrong
@@ -206,7 +216,7 @@ async function scrapeArrondissement(arr, searchType) {
         break;
       }
 
-      const raw = await page.evaluate(extractListings);
+      const raw = await page.evaluate(extractListings, searchType);
       let newCount = 0;
       for (const item of raw) {
         if (seenUrls.has(item.url)) continue;
