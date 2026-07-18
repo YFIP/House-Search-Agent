@@ -33,7 +33,12 @@ const parseListing = require('./parse-listing');
 const { extractDetailFeatures } = require('./parse-listing');
 
 const PARIS_GEOCODE = 'ad08fr31096';
-const LISTING_SELECTOR = 'a[href*="/annonces/locations/"]';
+// Same real bug fix as the arrondissement/suburb scrapers: hardcoded
+// rent-only selector caused every sale job to silently return 0
+// listings.
+function getListingSelector(searchType) {
+  return searchType === 'sale' ? 'a[href*="/annonces/achat/"]' : 'a[href*="/annonces/locations/"]';
+}
 const DETAIL_FETCH_CONCURRENCY = 3;
 
 async function getBrowser() {
@@ -71,10 +76,11 @@ function withTimeout(promise, ms, label) {
   ]);
 }
 
-function extractListings() {
+function extractListings(searchType) {
   const results = [];
   const seen = new Set();
-  const links = Array.from(document.querySelectorAll('a[href*="/annonces/locations/"]'));
+  const linkSelector = searchType === 'sale' ? 'a[href*="/annonces/achat/"]' : 'a[href*="/annonces/locations/"]';
+  const links = Array.from(document.querySelectorAll(linkSelector));
 
   for (const link of links) {
     const href = link.href;
@@ -227,7 +233,7 @@ async function scrapeSeLoger(searchType = 'rent') {
     // per-arrondissement/suburb jobs) since this runs inside scrape-main,
     // sharing its 15-minute budget with Barnes and Junot rather than
     // having its own dedicated 5-minute window.
-    const MAX_PAGES = 8;
+    const MAX_PAGES = 15;
     const allParsed = [];
     const seenUrls = new Set();
 
@@ -242,13 +248,13 @@ async function scrapeSeLoger(searchType = 'rent') {
       await new Promise(r => setTimeout(r, 3000)); // let consent banner / JS challenge settle
 
       try {
-        await page.waitForSelector(LISTING_SELECTOR, { timeout: 15000 });
+        await page.waitForSelector(getListingSelector(searchType), { timeout: 15000 });
       } catch (e) {
         console.warn(`[SeLoger] Page ${pageNum}: selector timeout — stopping pagination here.`);
         break;
       }
 
-      const rawListings = await page.evaluate(extractListings);
+      const rawListings = await page.evaluate(extractListings, searchType);
       let newCount = 0;
       for (const item of rawListings) {
         if (seenUrls.has(item.url)) continue;
