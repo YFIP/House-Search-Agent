@@ -9,18 +9,33 @@ const fs = require('fs');
 const path = require('path');
 const ExcelJS = require('exceljs');
 
-function findSeLogerSuburbFiles(dir) {
+function findSeLogerSuburbFiles(dir, searchType) {
   // Specifically excludes "-arr-" files so this doesn't also match the
   // arrondissement result files below (both start with "output-seloger-").
-  return fs.readdirSync(dir).filter(f => /^output-seloger-(?!arr-).+\.json$/.test(f));
+  // searchType-aware: rent files have no suffix, sale files end in
+  // "-sale.json" — both types coexist in the same artifacts folder since
+  // this function runs once per searchType.
+  const pattern = searchType === 'sale'
+    ? /^output-seloger-(?!arr-).+-sale\.json$/
+    : /^output-seloger-(?!arr-).+(?<!-sale)\.json$/;
+  return fs.readdirSync(dir).filter(f => pattern.test(f));
 }
 
-function findSeLogerArrondissementFiles(dir) {
-  return fs.readdirSync(dir).filter(f => /^output-seloger-arr-\d+\.json$/.test(f));
+function findSeLogerArrondissementFiles(dir, searchType) {
+  const pattern = searchType === 'sale'
+    ? /^output-seloger-arr-\d+-sale\.json$/
+    : /^output-seloger-arr-\d+\.json$/;
+  return fs.readdirSync(dir).filter(f => pattern.test(f));
 }
 
-function findParisRentalFiles(dir) {
-  return fs.readdirSync(dir).filter(f => /^output-parisrental-.+\.json$/.test(f));
+function findParisRentalFiles(dir, searchType) {
+  // 'sale' category file is output-parisrental-sale-1.json — distinct
+  // from the rent categories (furnished/unfurnished) by name alone, no
+  // extra suffix needed.
+  const pattern = searchType === 'sale'
+    ? /^output-parisrental-sale-.+\.json$/
+    : /^output-parisrental-(furnished|unfurnished)-.+\.json$/;
+  return fs.readdirSync(dir).filter(f => pattern.test(f));
 }
 
 function loadJson(filePath) {
@@ -111,27 +126,28 @@ async function buildExcel(searchType, listings, sourceStatus, generatedAtIso) {
   });
   info.getColumn('A').width = 90;
 
-  const filename = searchType === 'purchase' ? 'listings-purchase.xlsx' : 'listings.xlsx';
+  const filename = searchType === 'sale' ? 'listings-sale.xlsx' : 'listings.xlsx';
   await workbook.xlsx.writeFile(filename);
   return filename;
 }
 
 async function main() {
-  const searchType = process.argv[2] === 'purchase' ? 'purchase' : 'rent';
+  const searchType = process.argv[2] === 'sale' ? 'sale' : 'rent';
   const artifactsDir = process.argv[3] || '.';
 
   console.log(`Merging main sources with individual SeLoger suburb results from: ${artifactsDir}`);
 
-  const mainDataPath = path.join(artifactsDir, 'output-main.json');
+  const mainDataFilename = searchType === 'sale' ? 'output-main-sale.json' : 'output-main.json';
+  const mainDataPath = path.join(artifactsDir, mainDataFilename);
   if (!fs.existsSync(mainDataPath)) {
     console.error(`Missing ${mainDataPath} — the main-sources job may not have completed or its artifact wasn't downloaded correctly.`);
     process.exit(1);
   }
   const mainData = loadJson(mainDataPath);
 
-  const suburbFiles = findSeLogerSuburbFiles(artifactsDir);
-  const arrFiles = findSeLogerArrondissementFiles(artifactsDir);
-  const parisRentalFiles = findParisRentalFiles(artifactsDir);
+  const suburbFiles = findSeLogerSuburbFiles(artifactsDir, searchType);
+  const arrFiles = findSeLogerArrondissementFiles(artifactsDir, searchType);
+  const parisRentalFiles = findParisRentalFiles(artifactsDir, searchType);
   console.log(`Found ${suburbFiles.length} SeLoger suburb result file(s): ${suburbFiles.join(', ') || '(none)'}`);
   console.log(`Found ${arrFiles.length} SeLoger arrondissement result file(s): ${arrFiles.join(', ') || '(none)'}`);
   console.log(`Found ${parisRentalFiles.length} ParisRental category result file(s): ${parisRentalFiles.join(', ') || '(none)'}`);
@@ -211,7 +227,7 @@ async function main() {
   // replacement for the original text.
   const { normalizeArea } = require('./normalize-area');
   const listingsWithArea = filteredListings.map(l => ({ ...l, normalizedArea: normalizeArea(l.address) }));
-  const jsonFilename = searchType === 'purchase' ? 'listings-purchase.json' : 'listings.json';
+  const jsonFilename = searchType === 'sale' ? 'listings-sale.json' : 'listings.json';
   fs.writeFileSync(jsonFilename, JSON.stringify({
     generatedAt: new Date().toISOString(),
     searchType,
