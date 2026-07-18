@@ -160,6 +160,30 @@ async function scrapeLocation(browser, slug, searchType) {
       // Genuinely zero listings for this location today is expected and
       // fine — not every one of ~50 towns will have active inventory at
       // any given moment. Not logged as an error.
+      await page.close();
+      return { slug, listings: [], error: null };
+    }
+
+    // Real bug found live: Junot had NO pagination at all — fine for
+    // rent (41 real listings total, comfortably fits on one page) but a
+    // serious gap for sale (849 real listings — page 1 alone was only
+    // capturing a small fraction). Confirmed live: this is infinite
+    // scroll with a genuine 3-5s loading delay per batch (not a
+    // click-based "next" control — earlier "page 2" elements found on
+    // the page turned out to be unrelated multi-step form progress
+    // indicators, not pagination). Only applied for sale — rent doesn't
+    // need it, and scrolling adds real time cost multiplied across
+    // ~50+ individual location pages scraped per run.
+    if (searchType === 'sale') {
+      const MAX_SCROLLS = 6; // bounded per-location to keep total runtime reasonable across all ~50 locations
+      let previousCount = (await page.evaluate(extractListings)).length;
+      for (let i = 0; i < MAX_SCROLLS; i++) {
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+        await new Promise(r => setTimeout(r, 5000)); // confirmed live: 3-5s real loading delay
+        const currentCount = (await page.evaluate(extractListings)).length;
+        if (currentCount <= previousCount) break; // genuinely reached the end
+        previousCount = currentCount;
+      }
     }
 
     const raw = await page.evaluate(extractListings);
