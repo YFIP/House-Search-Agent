@@ -11,8 +11,9 @@ const { scrapeArrondissement, PARIS_ARRONDISSEMENTS } = require('./seloger-arron
 
 async function main() {
   const arrNum = parseInt(process.argv[2], 10);
+  const searchType = process.argv[3] === 'sale' ? 'sale' : 'rent';
   if (!arrNum || arrNum < 1 || arrNum > 20) {
-    console.error('Usage: node scrape-single-seloger-arrondissement.js <1-20>');
+    console.error('Usage: node scrape-single-seloger-arrondissement.js <1-20> [rent|sale]');
     process.exit(1);
   }
 
@@ -22,14 +23,14 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`[Paris ${arrNum}e] Scraping in isolation (own process, own session)...`);
+  console.log(`[Paris ${arrNum}e] Scraping ${searchType} in isolation (own process, own session)...`);
   const start = Date.now();
-  const result = await scrapeArrondissement(arr, 'rent');
+  const result = await scrapeArrondissement(arr, searchType);
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
 
   console.log(`[Paris ${arrNum}e] Done in ${elapsed}s: ${result.listings.length} listings${result.error ? ', ERROR: ' + result.error : ''}`);
 
-  const filename = `output-seloger-arr-${arrNum}.json`;
+  const filename = searchType === 'sale' ? `output-seloger-arr-${arrNum}-sale.json` : `output-seloger-arr-${arrNum}.json`;
   fs.writeFileSync(filename, JSON.stringify(result, null, 2));
   console.log(`[Paris ${arrNum}e] Wrote ${filename}`);
 }
