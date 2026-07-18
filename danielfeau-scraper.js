@@ -22,7 +22,15 @@ const parseListing = require('./parse-listing');
 const { extractDetailFeatures } = require('./parse-listing');
 
 const LISTING_SELECTOR = 'a[href*="/annonce-immobiliere/"]';
-const MAX_PAGES = 12; // safety margin above the confirmed 10 pages for Paris
+// Raised after finding real evidence of pagination up to page 18 for
+// JUST the 16th arrondissement's buy listings alone (vs the original 10
+// pages confirmed for the combined all-Paris RENT page) - buy volume
+// runs considerably higher here.
+const MAX_PAGES = 25;
+// Overall cap raised substantially from the original 100 - real evidence
+// shows buy listings alone could plausibly exceed 100 from the Paris
+// page before suburbs are even reached.
+const MAX_TOTAL_LISTINGS = 600;
 
 async function getBrowser() {
   const puppeteer = require('puppeteer');
@@ -109,8 +117,8 @@ async function scrapeLocation(browser, baseUrl, maxPages, searchType, seenUrls, 
       console.log(`[DanielFeau] Page ${pageNum} of ${baseUrl} had no new listings — stopping this location.`);
       break;
     }
-    if (allListings.length >= 100) {
-      console.log(`[DanielFeau] Reached 100-listing cap — stopping.`);
+    if (allListings.length >= MAX_TOTAL_LISTINGS) {
+      console.log(`[DanielFeau] Reached ${MAX_TOTAL_LISTINGS}-listing cap — stopping.`);
       return;
     }
   }
@@ -123,20 +131,30 @@ async function scrapeDanielFeau(searchType = 'rent') {
     const allListings = [];
     const seenUrls = new Set();
 
-    // All-Paris first (10 confirmed pages), then the 3 confirmed suburb
-    // URLs — same "Paris + suburbs" coverage principle as every other
-    // source in this project.
-    await scrapeLocation(browser, 'https://danielfeau.com/fr/location/paris', MAX_PAGES, searchType, seenUrls, allListings);
+    // Confirmed asymmetric URL structure: buy (vente) requires
+    // "/appartements/" in the path, rent (location) does not — verified
+    // live via each URL's own footer navigation links.
+    const mainUrl = searchType === 'sale'
+      ? 'https://danielfeau.com/fr/listing/france/vente/appartements/paris'
+      : 'https://danielfeau.com/fr/location/paris';
 
-    if (allListings.length < 100) {
-      const suburbUrls = [
-        'https://danielfeau.com/fr/listing/france/location/neuilly',
-        'https://danielfeau.com/fr/listing/france/location/boulogne',
-        'https://danielfeau.com/fr/listing/france/location/saint-cloud'
-      ];
+    await scrapeLocation(browser, mainUrl, MAX_PAGES, searchType, seenUrls, allListings);
+
+    if (allListings.length < MAX_TOTAL_LISTINGS) {
+      const suburbUrls = searchType === 'sale'
+        ? [
+            'https://danielfeau.com/fr/listing/france/vente/appartements/neuilly',
+            'https://danielfeau.com/fr/listing/france/vente/appartements/boulogne',
+            'https://danielfeau.com/fr/listing/france/vente/appartements/saint-cloud'
+          ]
+        : [
+            'https://danielfeau.com/fr/listing/france/location/neuilly',
+            'https://danielfeau.com/fr/listing/france/location/boulogne',
+            'https://danielfeau.com/fr/listing/france/location/saint-cloud'
+          ];
       for (const url of suburbUrls) {
-        if (allListings.length >= 100) break;
-        await scrapeLocation(browser, url, 3, searchType, seenUrls, allListings);
+        if (allListings.length >= MAX_TOTAL_LISTINGS) break;
+        await scrapeLocation(browser, url, 10, searchType, seenUrls, allListings);
       }
     }
 
