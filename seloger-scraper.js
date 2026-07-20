@@ -39,7 +39,7 @@ const PARIS_GEOCODE = 'ad08fr31096';
 function getListingSelector(searchType) {
   return searchType === 'sale' ? 'a[href*="/annonces/achat/"]' : 'a[href*="/annonces/locations/"]';
 }
-const DETAIL_FETCH_CONCURRENCY = 3;
+const DETAIL_FETCH_CONCURRENCY = 5; // raised from 3 given listing volume grew substantially (up to 450/location, from ~100 before) - modest increase given SeLoger's known anti-bot sensitivity
 
 async function getBrowser() {
   // Switched to puppeteer-extra + stealth plugin after real evidence of
