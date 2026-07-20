@@ -29,6 +29,13 @@ const { google } = require('googleapis');
 const HEADER_ROW = ['Starred', 'Status', 'Source', 'Price (€)', 'Bedrooms', 'Bathrooms', 'm²', 'Area', 'Address', 'Elevator', 'Furnished', 'Balcony', 'URL'];
 // Column index of each field, matching HEADER_ROW order (0-based)
 const COL = { starred: 0, status: 1, source: 2, price: 3, bedrooms: 4, bathrooms: 5, sqm: 6, area: 7, address: 8, elevator: 9, furnished: 10, balcony: 11, url: 12 };
+// Derived automatically from HEADER_ROW's length rather than
+// hardcoded, after a real bug: adding the Bathrooms column (12 -> 13
+// columns, A-L -> A-M) but leaving 3 separate hardcoded "L" range
+// references unchanged caused a live failure ("tried writing to column
+// [M]" — outside the declared A1:L1 range). Deriving this means adding
+// another column in the future can't reintroduce the same class of bug.
+const LAST_COL_LETTER = String.fromCharCode(64 + HEADER_ROW.length); // 65 = 'A', so 64 + length gives the right letter for lengths up to 26
 
 async function ensureSheetExists(sheets, sheetId, sheetName) {
   // Rent and sale prices are wildly different scales (hundreds vs
@@ -71,7 +78,7 @@ async function readExistingStarred(sheets, sheetId, sheetName) {
   try {
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: sheetId,
-      range: `${sheetName}!A2:L`
+      range: `${sheetName}!A2:${LAST_COL_LETTER}`
     });
     const rows = res.data.values || [];
     const map = new Map();
@@ -157,12 +164,12 @@ async function syncToGoogleSheets(listingsJsonPath, sheetName = 'Sheet1') {
   // isn't meaningful here anyway (the person can sort/filter in Sheets).
   await sheets.spreadsheets.values.clear({
     spreadsheetId: sheetId,
-    range: `${sheetName}!A2:L`
+    range: `${sheetName}!A2:${LAST_COL_LETTER}`
   });
 
   await sheets.spreadsheets.values.update({
     spreadsheetId: sheetId,
-    range: `${sheetName}!A1:L1`,
+    range: `${sheetName}!A1:${LAST_COL_LETTER}1`,
     valueInputOption: 'RAW',
     requestBody: { values: [HEADER_ROW] }
   });
