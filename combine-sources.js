@@ -64,7 +64,7 @@ async function runSource(label, promiseFactory, results, sourceStatus) {
 }
 
 async function combineAllSources(searchType = 'rent', options = {}) {
-  const { fetchDetails = false, excludeSeLogerSuburbs = false, excludeParisRental = false, externalListings = [], externalSourceStatus = [] } = options;
+  const { fetchDetails = false, excludeSeLogerSuburbs = false, excludeParisRental = false, excludeDanielFeau = false, externalListings = [], externalSourceStatus = [] } = options;
   const results = [...externalListings];
   const sourceStatus = [...externalSourceStatus];
 
@@ -72,8 +72,9 @@ async function combineAllSources(searchType = 'rent', options = {}) {
   await runSource('Barnes-Suburbs', () => scrapeBarnesSuburbs(searchType), results, sourceStatus);
   await runSource('Junot', () => scrapeJunot(searchType), results, sourceStatus);
 
-  // SeLoger and its suburbs: rent only for now (first page only, see
-  // seloger-scraper.js and seloger-suburbs-scraper.js for why).
+  // SeLoger, SeLoger-Suburbs: rent AND sale both verified live (real
+  // pagination confirmed for both via the distributionTypes=Buy/Rent
+  // parameter) — the old rent-only gate here is removed.
   //
   // excludeSeLogerSuburbs: RESTORED after a real regression — this option
   // existed in an earlier version (built for the matrix-job architecture,
@@ -84,39 +85,27 @@ async function combineAllSources(searchType = 'rent', options = {}) {
   // passing excludeSeLogerSuburbs: true this whole time — it just had
   // nothing to act on it, so SeLoger-Suburbs kept running unconditionally
   // inside scrape-main using the old single-process code.
-  if (searchType === 'rent') {
-    await runSource('SeLoger', () => scrapeSeLoger(searchType), results, sourceStatus);
-    if (!excludeSeLogerSuburbs) {
-      await runSource('SeLoger-Suburbs', () => scrapeSeLogerSuburbs(searchType), results, sourceStatus);
-    }
-  } else {
-    sourceStatus.push({ source: 'SeLoger', found: 0, error: 'Purchase not yet supported for SeLoger' });
-    if (!excludeSeLogerSuburbs) {
-      sourceStatus.push({ source: 'SeLoger-Suburbs', found: 0, error: 'Purchase not yet supported for SeLoger' });
-    }
+  await runSource('SeLoger', () => scrapeSeLoger(searchType), results, sourceStatus);
+  if (!excludeSeLogerSuburbs) {
+    await runSource('SeLoger-Suburbs', () => scrapeSeLogerSuburbs(searchType), results, sourceStatus);
   }
 
-  // Book-a-Flat, Perenium, ParisRental, DanielFeau, Eiffel Housing: all
-  // five sites have "for sale" sections too, but only the rental search
-  // has been verified live for each — scoped rent-only rather than
-  // silently assuming the purchase side works the same way.
-  if (searchType === 'rent') {
-    await runSource('Book-a-Flat', () => scrapeBookAFlat(searchType), results, sourceStatus);
-    await runSource('Perenium', () => scrapePerenium(searchType), results, sourceStatus);
-    if (!excludeParisRental) {
-      await runSource('ParisRental', () => scrapeParisRental(searchType), results, sourceStatus);
-    }
-    await runSource('DanielFeau', () => scrapeDanielFeau(searchType), results, sourceStatus);
-    await runSource('Eiffel Housing', () => scrapeEiffelHousing(searchType), results, sourceStatus);
-  } else {
-    sourceStatus.push({ source: 'Book-a-Flat', found: 0, error: 'Purchase not yet verified for Book-a-Flat' });
-    sourceStatus.push({ source: 'Perenium', found: 0, error: 'Purchase not yet verified for Perenium' });
-    if (!excludeParisRental) {
-      sourceStatus.push({ source: 'ParisRental', found: 0, error: 'Purchase not yet verified for ParisRental' });
-    }
-    sourceStatus.push({ source: 'DanielFeau', found: 0, error: 'Purchase not yet verified for DanielFeau' });
-    sourceStatus.push({ source: 'Eiffel Housing', found: 0, error: 'Purchase not yet verified for Eiffel Housing' });
+  // Book-a-Flat, Perenium, ParisRental, DanielFeau, Eiffel Housing: rent
+  // AND sale both verified live for every one of these — the old
+  // rent-only gate is removed.
+  await runSource('Book-a-Flat', () => scrapeBookAFlat(searchType), results, sourceStatus);
+  await runSource('Perenium', () => scrapePerenium(searchType), results, sourceStatus);
+  if (!excludeParisRental) {
+    await runSource('ParisRental', () => scrapeParisRental(searchType), results, sourceStatus);
   }
+  // DanielFeau: moved to its own isolated job (like SeLoger-Suburbs)
+  // after adding real detail-page enrichment - up to 600 listings with a
+  // cautious, anti-bot-safe fetch rate needs more time than scrape-main's
+  // shared budget can comfortably afford.
+  if (!excludeDanielFeau) {
+    await runSource('DanielFeau', () => scrapeDanielFeau(searchType), results, sourceStatus);
+  }
+  await runSource('Eiffel Housing', () => scrapeEiffelHousing(searchType), results, sourceStatus);
 
   return {
     searchType,
