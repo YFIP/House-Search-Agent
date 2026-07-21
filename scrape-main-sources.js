@@ -17,7 +17,7 @@ async function main() {
   const fetchDetails = process.argv[3] === 'details';
 
   console.log(`Scraping main sources for ${searchType}${fetchDetails ? ' (with detail enrichment)' : ''} (SeLoger-Suburbs and ParisRental excluded — run separately)...`);
-  const data = await combineAllSources(searchType, { fetchDetails, excludeSeLogerSuburbs: true, excludeParisRental: true, excludeDanielFeau: true });
+  const data = await combineAllSources(searchType, { fetchDetails, excludeSeLogerSuburbs: true, excludeParisRental: true, excludeDanielFeau: true, excludeEiffelHousing: true });
 
   console.log(`\nMain sources total: ${data.totalListings}`);
   data.sourceStatus.forEach(s => console.log(`  ${s.source}: ${s.error ? 'FAILED - ' + s.error : s.found + ' listings'}`));
