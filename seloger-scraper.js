@@ -216,7 +216,8 @@ async function enrichWithDetails(listings) {
     });
 
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-    console.log(`[SeLoger] Detail fetch complete in ${elapsed}s`);
+    const blocked = details.filter(d => d.elevator === null && d.balcony === null && d.furnished === null && d.bathroomsFromDetail === null && d.bedroomsFromDetail === null).length;
+    console.log(`[SeLoger] Detail fetch complete in ${elapsed}s: ${listings.length - blocked}/${listings.length} succeeded, ${blocked} blocked/failed`);
 
     return listings.map((listing, i) => {
       const d = details[i];
