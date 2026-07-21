@@ -367,10 +367,57 @@ jobs:
           path: output-danielfeau-sale.json
           retention-days: 1
 
-  # Downloads every artifact from all six jobs above, merges everything,
+  # Eiffel Housing moved to its own isolated job after adding real
+  # detail-page enrichment for bathroom info - confirmed live that
+  # scrape-main got cancelled at its 15-minute timeout mid-way through
+  # Eiffel Housing's enrichment step (152 listings), which didn't exist
+  # before this session and wasn't accounted for in the shared budget.
+  scrape-eiffel-housing:
+    needs: check-schedule
+    if: needs.check-schedule.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth
+      - name: Scrape Eiffel Housing rent in isolation
+        run: node scrape-single-eiffel-housing.js rent
+      - name: Upload result
+        uses: actions/upload-artifact@v4
+        with:
+          name: output-eiffel-housing
+          path: output-eiffel-housing.json
+          retention-days: 1
+
+  scrape-eiffel-housing-sale:
+    needs: check-schedule
+    if: needs.check-schedule.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth
+      - name: Scrape Eiffel Housing sale in isolation
+        run: node scrape-single-eiffel-housing.js sale
+      - name: Upload sale result
+        uses: actions/upload-artifact@v4
+        with:
+          name: output-eiffel-housing-sale
+          path: output-eiffel-housing-sale.json
+          retention-days: 1
+
+  # Downloads every artifact from all eight jobs above, merges everything,
   # and writes/commits the final Excel file.
   merge-and-commit:
-    needs: [check-schedule, scrape-main, scrape-main-sale, scrape-seloger-suburb, scrape-seloger-suburb-sale, scrape-seloger-arrondissement, scrape-seloger-arrondissement-sale, scrape-parisrental-page, scrape-parisrental-sale, scrape-danielfeau, scrape-danielfeau-sale]
+    needs: [check-schedule, scrape-main, scrape-main-sale, scrape-seloger-suburb, scrape-seloger-suburb-sale, scrape-seloger-arrondissement, scrape-seloger-arrondissement-sale, scrape-parisrental-page, scrape-parisrental-sale, scrape-danielfeau, scrape-danielfeau-sale, scrape-eiffel-housing, scrape-eiffel-housing-sale]
     if: needs.check-schedule.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 8
