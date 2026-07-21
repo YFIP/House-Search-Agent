@@ -45,6 +45,78 @@ async function getBrowser() {
   });
 }
 
+async function mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  async function worker() {
+    while (nextIndex < items.length) {
+      const current = nextIndex++;
+      results[current] = await fn(items[current], current);
+    }
+  }
+  const workers = Array.from({ length: Math.min(limit, items.length) }, worker);
+  await Promise.all(workers);
+  return results;
+}
+
+// Real evidence found live on SeLoger: visiting individual listing
+// detail pages too fast/too many at once can trigger anti-bot blocking,
+// silently returning tiny placeholder pages instead of real content.
+// Applying the same cautious approach here as a safeguard, even though
+// Perenium's own blocking behavior (if any) hasn't been directly tested -
+// low concurrency, small delays, and detecting+retrying suspiciously
+// short responses costs little given Perenium's tiny (~14-19) listing
+// count, and protects against the same failure mode if it exists here too.
+const DETAIL_FETCH_CONCURRENCY = 2;
+
+async function fetchListingDetails(browser, url, isRetry = false) {
+  let page;
+  try {
+    await new Promise(r => setTimeout(r, 400 + Math.random() * 400));
+    page = await browser.newPage();
+    await page.setDefaultNavigationTimeout(20000);
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+
+    const bodyText = await page.evaluate(() => document.body.innerText || '');
+    await page.close();
+
+    // Same threshold used for SeLoger - a genuine listing detail page
+    // should have real substantive content, not a near-empty placeholder.
+    if (bodyText.length < 500 && !isRetry) {
+      await new Promise(r => setTimeout(r, 3000 + Math.random() * 2000));
+      return fetchListingDetails(browser, url, true);
+    }
+
+    return extractDetailFeatures(bodyText);
+  } catch (error) {
+    if (page) { try { await page.close(); } catch (e) {} }
+    return { elevator: null, balcony: null, furnished: null, bathroomsFromDetail: null, bedroomsFromDetail: null };
+  }
+}
+
+async function enrichWithDetails(browser, listings) {
+  if (listings.length === 0) return listings;
+  const details = await mapWithConcurrency(listings, DETAIL_FETCH_CONCURRENCY, (listing) =>
+    fetchListingDetails(browser, listing.url)
+  );
+  return listings.map((listing, i) => {
+    const d = details[i];
+    // Matches the proven pattern used for SeLoger: elevator/balcony/
+    // furnished always take the detail-page value directly (detail
+    // pages are far more reliable for these than the brief summary
+    // card), while bathrooms/bedrooms use a fallback since those can
+    // genuinely already be populated correctly from the summary card.
+    return {
+      ...listing,
+      elevator: d.elevator,
+      balcony: d.balcony,
+      furnished: d.furnished,
+      bathrooms: listing.bathrooms != null ? listing.bathrooms : d.bathroomsFromDetail,
+      bedrooms: listing.bedrooms != null ? listing.bedrooms : d.bedroomsFromDetail
+    };
+  });
+}
+
 function extractListings() {
   const results = [];
   const seen = new Set();
@@ -115,10 +187,10 @@ async function scrapePerenium(searchType = 'rent') {
         listing.source = 'Perenium';
         listing.searchType = searchType;
         listing.isExactListing = true;
-      // Applying the same detail-feature extraction directly on the raw
-      // summary text (same pattern proven for Junot/Eiffel Housing) -
-      // returns null honestly for fields not present in the text, picks
-      // up real data for fields that are.
+      // Summary-card text rarely states elevator/furnished/bathroom -
+      // real detail-page enrichment (below, after this loop) is the
+      // primary source now. This fills in anything already available
+      // from the summary as a fallback only.
       const details = extractDetailFeatures(item.rawText);
       if (listing.elevator == null) listing.elevator = details.elevator;
       if (listing.balcony == null) listing.balcony = details.balcony;
@@ -136,10 +208,13 @@ async function scrapePerenium(searchType = 'rent') {
       }
     }
 
-    await browser.close();
-    console.log(`[Perenium] Total unique listings: ${allListings.length}`);
+    console.log(`[Perenium] Fetching detail pages for ${allListings.length} listings (concurrency: ${DETAIL_FETCH_CONCURRENCY})...`);
+    const enrichedListings = await enrichWithDetails(browser, allListings);
 
-    return { source: 'Perenium', searchType, listings: allListings, error: null };
+    await browser.close();
+    console.log(`[Perenium] Total unique listings: ${enrichedListings.length}`);
+
+    return { source: 'Perenium', searchType, listings: enrichedListings, error: null };
 
   } catch (error) {
     console.error(`[Perenium] Fatal error: ${error.message}`);
