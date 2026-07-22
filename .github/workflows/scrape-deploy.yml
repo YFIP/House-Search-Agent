@@ -353,8 +353,24 @@ jobs:
           - { arr: 16, shard: 0, shardCount: 3 }
           - { arr: 16, shard: 1, shardCount: 3 }
           - { arr: 16, shard: 2, shardCount: 3 }
-          - { arr: 17, shard: 0, shardCount: 1 }
-          - { arr: 18, shard: 0, shardCount: 1 }
+          # arr 17/18 corrected from REAL production run data (2026-07-21):
+          # the earlier live verification pass badly undercounted both (24
+          # and 443) due to the same anti-bot corruption pattern already
+          # seen and caught for 7 suburb towns — this time it slipped
+          # through uncaught, and both single-shard jobs hung for the full
+          # 60-minute timeout instead of completing. The actual production
+          # run reached page 70/1701 listings (arr 17) and page 76/2095
+          # listings (arr 18), both right at their natural end (0 new on
+          # the final page) when cancelled — those are the real counts.
+          - { arr: 17, shard: 0, shardCount: 4 }
+          - { arr: 17, shard: 1, shardCount: 4 }
+          - { arr: 17, shard: 2, shardCount: 4 }
+          - { arr: 17, shard: 3, shardCount: 4 }
+          - { arr: 18, shard: 0, shardCount: 5 }
+          - { arr: 18, shard: 1, shardCount: 5 }
+          - { arr: 18, shard: 2, shardCount: 5 }
+          - { arr: 18, shard: 3, shardCount: 5 }
+          - { arr: 18, shard: 4, shardCount: 5 }
           - { arr: 19, shard: 0, shardCount: 3 }
           - { arr: 19, shard: 1, shardCount: 3 }
           - { arr: 19, shard: 2, shardCount: 3 }
