@@ -252,7 +252,15 @@ async function enrichWithDetails(listings, label) {
 // page opens on a single browser. Launching a FRESH browser per town
 // costs a little startup overhead (~1-2s each) but avoids any cumulative
 // degradation entirely, since each town starts with a clean browser.
-async function scrapeTown(town, searchType) {
+// shardIndex/shardCount: same fix applied to the arrondissement scraper —
+// real evidence found live (2026-07-21) that some suburbs (e.g.
+// Boulogne-Billancourt: 1522 sale listings) need up to ~70 minutes just
+// for detail-page enrichment, blowing past even a generously bumped job
+// timeout. Every shard does its own full pagination but only enriches
+// the fraction of listings where `index % shardCount === shardIndex`.
+// Defaults (0, 1) preserve old single-job behavior for any caller that
+// doesn't pass these.
+async function scrapeTown(town, searchType, shardIndex = 0, shardCount = 1) {
   let browser;
   let page;
   try {
@@ -312,6 +320,14 @@ async function scrapeTown(town, searchType) {
 
     const valid = allParsed.filter(l => l.price > 0 || l.priceOnRequest || l.address);
 
+    // Shard AFTER full pagination completes — see the arrondissement
+    // scraper's identical comment for why (every shard sees the full
+    // listing set and independently picks its own slice).
+    const shard = shardCount > 1 ? valid.filter((_, i) => i % shardCount === shardIndex) : valid;
+    if (shardCount > 1) {
+      console.log(`[SeLoger-${town.slug}] Shard ${shardIndex}/${shardCount}: enriching ${shard.length}/${valid.length} listings`);
+    }
+
     // Close the pagination browser/page before enrichment, which now
     // launches a genuinely fresh browser of its own.
     await page.close();
@@ -319,7 +335,7 @@ async function scrapeTown(town, searchType) {
     browser = null;
     page = null;
 
-    const enriched = await enrichWithDetails(valid, town.slug);
+    const enriched = await enrichWithDetails(shard, town.slug);
     return { slug: town.slug, listings: enriched, error: null };
 
   } catch (error) {

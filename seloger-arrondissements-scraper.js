@@ -207,7 +207,18 @@ async function enrichWithDetails(listings, label) {
 
 // Scrapes ONE arrondissement in complete isolation (own browser, meant to
 // run as its own GitHub Actions job) — same pattern proven for suburbs.
-async function scrapeArrondissement(arr, searchType) {
+//
+// shardIndex/shardCount: real evidence found live (2026-07-21) that
+// removing the page/result cap wasn't enough on its own — the busiest
+// arrondissements (15th: 2075 sale listings) need up to ~95 minutes just
+// for detail-page enrichment at the safe anti-bot concurrency, blowing
+// past even a generously bumped job timeout. Every shard runs its OWN
+// full pagination pass (cheap, ~1-3 min) but only enriches the fraction
+// of listings where `index % shardCount === shardIndex` — splitting the
+// expensive part (enrichment) across parallel isolated jobs instead of
+// racing one job against an ever-bigger clock. Defaults (0, 1) preserve
+// old single-job behavior for any caller that doesn't pass these.
+async function scrapeArrondissement(arr, searchType, shardIndex = 0, shardCount = 1) {
   let browser;
   let page;
   try {
@@ -275,6 +286,15 @@ async function scrapeArrondissement(arr, searchType) {
 
     const valid = allParsed.filter(l => l.price > 0 || l.priceOnRequest || l.address);
 
+    // Shard AFTER full pagination completes — every shard sees the same
+    // complete listing set and independently picks its own slice, so no
+    // shard needs to know what any other found. Index-modulo keeps each
+    // shard's slice roughly even regardless of shardCount.
+    const shard = shardCount > 1 ? valid.filter((_, i) => i % shardCount === shardIndex) : valid;
+    if (shardCount > 1) {
+      console.log(`[SeLoger-${arr.slug}] Shard ${shardIndex}/${shardCount}: enriching ${shard.length}/${valid.length} listings`);
+    }
+
     // Close the pagination browser/page before enrichment, which now
     // launches a genuinely fresh browser of its own (see the
     // EXPERIMENTAL note in enrichWithDetails above).
@@ -283,7 +303,7 @@ async function scrapeArrondissement(arr, searchType) {
     browser = null;
     page = null;
 
-    const enriched = await enrichWithDetails(valid, arr.slug);
+    const enriched = await enrichWithDetails(shard, arr.slug);
     return { arrondissement: arr.arrondissement, listings: enriched, error: null };
 
   } catch (error) {

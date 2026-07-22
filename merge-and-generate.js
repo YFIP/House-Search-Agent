@@ -12,19 +12,23 @@ const ExcelJS = require('exceljs');
 function findSeLogerSuburbFiles(dir, searchType) {
   // Specifically excludes "-arr-" files so this doesn't also match the
   // arrondissement result files below (both start with "output-seloger-").
-  // searchType-aware: rent files have no suffix, sale files end in
-  // "-sale.json" — both types coexist in the same artifacts folder since
-  // this function runs once per searchType.
+  // Filenames now include a "-shard-N" segment (see scrape-single-seloger-
+  // suburb.js) since busy towns are split across multiple parallel
+  // enrichment jobs — every shard for a town produces its own file here,
+  // and the merge loop below just treats them as separate result sets
+  // (each contributes its own sourceStatus line, listings dedupe by URL
+  // like everything else).
   const pattern = searchType === 'sale'
-    ? /^output-seloger-(?!arr-).+-sale\.json$/
-    : /^output-seloger-(?!arr-).+(?<!-sale)\.json$/;
+    ? /^output-seloger-(?!arr-).+-shard-\d+-sale\.json$/
+    : /^output-seloger-(?!arr-).+-shard-\d+\.json$/;
   return fs.readdirSync(dir).filter(f => pattern.test(f));
 }
 
 function findSeLogerArrondissementFiles(dir, searchType) {
+  // Same shard-suffix change as findSeLogerSuburbFiles above.
   const pattern = searchType === 'sale'
-    ? /^output-seloger-arr-\d+-sale\.json$/
-    : /^output-seloger-arr-\d+\.json$/;
+    ? /^output-seloger-arr-\d+-shard-\d+-sale\.json$/
+    : /^output-seloger-arr-\d+-shard-\d+\.json$/;
   return fs.readdirSync(dir).filter(f => pattern.test(f));
 }
 

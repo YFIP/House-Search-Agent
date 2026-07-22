@@ -11,11 +11,18 @@
 // "first search of the session" position that's worked reliably so far.
 //
 // Usage:
-//   node scrape-single-seloger-suburb.js neuilly-sur-seine
+//   node scrape-single-seloger-suburb.js neuilly-sur-seine rent 0 2
+//   (neuilly-sur-seine, rent, shard 0 of 2)
 //
-// Writes its result to output-seloger-{slug}.json — this becomes a
-// GitHub Actions artifact that a later job downloads and merges with
-// everything else.
+// shardIndex/shardCount default to 0/1 (single job, old behavior) when
+// omitted. See seloger-suburbs-scraper.js's scrapeTown for why sharding
+// exists: the busiest towns have over a thousand listings, and enriching
+// all of them in one job takes far longer than any reasonable job
+// timeout — shards split that work across parallel isolated jobs.
+//
+// Writes its result to output-seloger-{slug}-shard-{shardIndex}.json —
+// this becomes a GitHub Actions artifact that a later job downloads and
+// merges with everything else.
 
 const fs = require('fs');
 const { scrapeTown, SUBURB_TOWNS } = require('./seloger-suburbs-scraper');
@@ -23,8 +30,10 @@ const { scrapeTown, SUBURB_TOWNS } = require('./seloger-suburbs-scraper');
 async function main() {
   const slug = process.argv[2];
   const searchType = process.argv[3] === 'sale' ? 'sale' : 'rent';
+  const shardIndex = process.argv[4] != null ? parseInt(process.argv[4], 10) : 0;
+  const shardCount = process.argv[5] != null ? parseInt(process.argv[5], 10) : 1;
   if (!slug) {
-    console.error('Usage: node scrape-single-seloger-suburb.js <town-slug> [rent|sale]');
+    console.error('Usage: node scrape-single-seloger-suburb.js <town-slug> [rent|sale] [shardIndex] [shardCount]');
     process.exit(1);
   }
 
@@ -34,14 +43,17 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`[${slug}] Scraping ${searchType} in isolation (own process, own session)...`);
+  const shardLabel = shardCount > 1 ? ` (shard ${shardIndex}/${shardCount})` : '';
+  console.log(`[${slug}] Scraping ${searchType} in isolation (own process, own session)${shardLabel}...`);
   const start = Date.now();
-  const result = await scrapeTown(town, searchType);
+  const result = await scrapeTown(town, searchType, shardIndex, shardCount);
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
 
   console.log(`[${slug}] Done in ${elapsed}s: ${result.listings.length} listings${result.error ? ', ERROR: ' + result.error : ''}`);
 
-  const filename = searchType === 'sale' ? `output-seloger-${slug}-sale.json` : `output-seloger-${slug}.json`;
+  const filename = searchType === 'sale'
+    ? `output-seloger-${slug}-shard-${shardIndex}-sale.json`
+    : `output-seloger-${slug}-shard-${shardIndex}.json`;
   fs.writeFileSync(filename, JSON.stringify(result, null, 2));
   console.log(`[${slug}] Wrote ${filename}`);
 }
