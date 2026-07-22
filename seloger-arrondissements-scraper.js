@@ -107,17 +107,38 @@ function extractListings(searchType) {
   // SeLoger scrapers: page.evaluate(extractListings) only sends THIS
   // function's own source into the browser, not a separate
   // extractStatedCount() function it referenced. Inlined here.
-  const titleText = document.title + ' ' + (document.querySelector('h1') ? document.querySelector('h1').innerText : '');
-  const countMatch = titleText.match(/(\d[\d\s]*)\s*annonces/i);
+  // Real bug found live (2026-07-22): this only matched "N annonces",
+  // but the real h1 format on /classified-search pages is "N
+  // appartements à louer" / "N maisons et appartements à louer" — never
+  // "annonces" at all — so statedCount was silently always null here.
+  //
+  // SECOND real bug found live right after fixing the first one:
+  // concatenating document.title + h1 text with a single space produced
+  // garbage like "750161041" — the postal code at the end of the title
+  // ("...75016") sat directly next to the h1's leading count ("968
+  // appartements...") with only one space between them, and the old
+  // [\d\s]* group greedily fused BOTH numbers into one, since it allows
+  // spaces inside the digit run (same class of bug the price regex in
+  // parse-listing.js already had to guard against, just missed here).
+  // Fixed by reading the h1 alone (never concatenated with anything
+  // else) and anchoring to its start, since the count is always the
+  // very first thing in it — nothing for an adjacent number to fuse with.
+  const h1Text = document.querySelector('h1') ? document.querySelector('h1').innerText : '';
+  const countMatch = h1Text.match(/^\s*(\d[\d\s]*?)\s*(?:annonces|appartements|maisons)/i);
   const statedCount = countMatch ? parseInt(countMatch[1].replace(/\s/g, ''), 10) : null;
 
   // Same contamination-cap fix as seloger-suburbs-scraper.js — caps to
   // the page's own stated count if we somehow picked up more (e.g. a
   // "nearby suggestions" filler section).
+  //
+  // Now returns statedCount alongside the results (was previously
+  // returned-then-discarded by the caller) — added so scrapeArrondissement
+  // can log SeLoger's own official total next to what we actually scraped,
+  // for real visibility into any gap rather than guessing at the cause.
   if (statedCount !== null && statedCount < results.length) {
-    return results.slice(0, statedCount);
+    return { results: results.slice(0, statedCount), statedCount };
   }
-  return results;
+  return { results, statedCount };
 }
 
 async function mapWithConcurrency(items, limit, fn) {
@@ -244,24 +265,62 @@ async function scrapeArrondissement(arr, searchType, shardIndex = 0, shardCount 
     // for the busiest arrondissements to finish enrichment too.
     const allParsed = [];
     const seenUrls = new Set();
+    let statedCountSeen = null;
+    let lastPageWasSuspiciouslyShort = false;
 
     for (let pageNum = 1; ; pageNum++) {
       const distributionType = searchType === 'sale' ? 'Buy' : 'Rent';
       const url = `https://www.seloger.com/classified-search?distributionTypes=${distributionType}&estateTypes=Apartment&locations=${arr.geoCode.toUpperCase()}&page=${pageNum}`;
 
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
-      await new Promise(r => setTimeout(r, 2000));
+      // Real evidence found live (2026-07-22): a single failed page load
+      // used to immediately end pagination here, silently. Production
+      // measured one arrondissement at 647 listings when SeLoger's own
+      // site showed ~968 for the same search — a clean isolated retest
+      // (no other confound) still hit a full page-load failure on its
+      // first attempt and would have given up with ZERO listings under
+      // the old logic. Retrying a few times before giving up
+      // distinguishes a transient hiccup from a genuine end — only
+      // treated as the real end after every attempt fails the same way.
+      const MAX_PAGE_ATTEMPTS = 3;
+      let pageLoadSucceeded = false;
+      let lastStatus = null;
+      for (let attempt = 1; attempt <= MAX_PAGE_ATTEMPTS; attempt++) {
+        const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => null);
+        await new Promise(r => setTimeout(r, 2000));
+        lastStatus = response ? response.status() : null;
+        try {
+          await page.waitForSelector(getListingSelector(searchType), { timeout: 10000 });
+          pageLoadSucceeded = true;
+          break;
+        } catch (e) {
+          if (attempt < MAX_PAGE_ATTEMPTS) {
+            console.warn(`[SeLoger-${arr.slug}] Page ${pageNum}: attempt ${attempt}/${MAX_PAGE_ATTEMPTS} failed (status ${lastStatus}) — retrying after cooldown...`);
+            await new Promise(r => setTimeout(r, 3000 + Math.random() * 2000));
+          }
+        }
+      }
 
-      try {
-        await page.waitForSelector(getListingSelector(searchType), { timeout: 10000 });
-      } catch (e) {
-        // No listings on this page — either genuinely out of pages, or
-        // (for page 1 of the 17 unverified arrondissements) a wrong
-        // geo-code. Either way, stop here rather than guess further.
+      if (!pageLoadSucceeded) {
+        // No listings on this page after every retry — either genuinely
+        // out of pages, a wrong geo-code (page 1), or a persistent block.
+        // Flag the block case explicitly rather than silently treating
+        // it the same as a genuine end.
+        if (lastStatus === 403 || lastStatus === 429) {
+          console.warn(`[SeLoger-${arr.slug}] Page ${pageNum}: got HTTP ${lastStatus} (blocked) even after ${MAX_PAGE_ATTEMPTS} attempts — stopping here. This page's listings are likely missing from the count below.`);
+        } else {
+          console.warn(`[SeLoger-${arr.slug}] Page ${pageNum}: failed to load after ${MAX_PAGE_ATTEMPTS} attempts (status ${lastStatus}) — treating as end of results.`);
+        }
         break;
       }
 
-      const raw = await page.evaluate(extractListings, searchType);
+      const { results: raw, statedCount } = await page.evaluate(extractListings, searchType);
+      if (statedCount != null) statedCountSeen = statedCount;
+      // A page returning far fewer links than a normal full page (usually
+      // ~25-30) without being the genuine last page is another sign of a
+      // partial/blocked load rather than real content — logged so a
+      // pattern of these lines up with any observed undercount.
+      lastPageWasSuspiciouslyShort = raw.length > 0 && raw.length < 10;
+
       let newCount = 0;
       for (const item of raw) {
         if (seenUrls.has(item.url)) continue;
@@ -285,6 +344,24 @@ async function scrapeArrondissement(arr, searchType, shardIndex = 0, shardCount 
     }
 
     const valid = allParsed.filter(l => l.price > 0 || l.priceOnRequest || l.address);
+    // NOTE: address is unconditionally overridden to arr.displayName above,
+    // so this filter never actually rejects anything here — valid.length
+    // will always equal allParsed.length. Kept for consistency with the
+    // other scrapers, not because it's doing real filtering in this file.
+
+    // Room-share/colocation listings get excluded later, once, across all
+    // sources (see merge-and-generate.js's `!l.isRoomShare` filter) — not
+    // here. Counted and logged now so the gap between "what we scraped"
+    // and "what SeLoger's own count says" isn't a mystery: a chunk of it
+    // is this deliberate exclusion, not a scraping bug.
+    const roomShareCount = valid.filter(l => l.isRoomShare).length;
+    const willAppearInFinalOutput = valid.length - roomShareCount;
+    if (statedCountSeen != null) {
+      const pct = ((willAppearInFinalOutput / statedCountSeen) * 100).toFixed(1);
+      console.log(`[SeLoger-${arr.slug}] SeLoger states ${statedCountSeen} total listings. We scraped ${allParsed.length} raw (${roomShareCount} are room-share/colocation, excluded downstream) -> ${willAppearInFinalOutput} will appear in final output (${pct}% of SeLoger's stated total).${lastPageWasSuspiciouslyShort ? ' Last page returned unusually few links — possible partial/blocked load.' : ''}`);
+    } else {
+      console.log(`[SeLoger-${arr.slug}] Could not read SeLoger's stated total (title/h1 didn't match). Scraped ${allParsed.length} raw, ${roomShareCount} room-share (excluded downstream), ${willAppearInFinalOutput} will appear in final output.`);
+    }
 
     // Shard AFTER full pagination completes — every shard sees the same
     // complete listing set and independently picks its own slice, so no

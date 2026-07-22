@@ -151,14 +151,22 @@ function extractListings(searchType) {
   // SeLoger scrapers: page.evaluate(extractListings) only sends THIS
   // function's own source into the browser, not a separate
   // extractStatedCount() function it referenced. Inlined here.
-  const titleText = document.title + ' ' + (document.querySelector('h1') ? document.querySelector('h1').innerText : '');
-  const countMatch = titleText.match(/(\d[\d\s]*)\s*annonces/i);
+  // Real bug found live (2026-07-22), same fix applied to
+  // seloger-arrondissements-scraper.js: (1) this only matched "N
+  // annonces" but the real h1 format is "N appartements à louer" / "N
+  // maisons et appartements à louer" — never "annonces" — so statedCount
+  // was silently always null; (2) concatenating document.title + h1 with
+  // a single space could fuse an adjacent postal code into the count
+  // (garbage like "750161041"). Fixed by reading the h1 alone, anchored
+  // to its start, since the count is always the very first thing in it.
+  const h1Text = document.querySelector('h1') ? document.querySelector('h1').innerText : '';
+  const countMatch = h1Text.match(/^\s*(\d[\d\s]*?)\s*(?:annonces|appartements|maisons)/i);
   const statedCount = countMatch ? parseInt(countMatch[1].replace(/\s/g, ''), 10) : null;
 
   if (statedCount !== null && statedCount < results.length) {
-    return results.slice(0, statedCount);
+    return { results: results.slice(0, statedCount), statedCount };
   }
-  return results;
+  return { results, statedCount };
 }
 
 async function mapWithConcurrency(items, limit, fn) {
@@ -276,22 +284,49 @@ async function scrapeTown(town, searchType, shardIndex = 0, shardCount = 1) {
     // Loop runs until a page yields zero new listings.
     const allParsed = [];
     const seenUrls = new Set();
+    let statedCountSeen = null;
 
     for (let pageNum = 1; ; pageNum++) {
       const distributionType = searchType === 'sale' ? 'Buy' : 'Rent';
       const url = `https://www.seloger.com/classified-search?distributionTypes=${distributionType}&estateTypes=Apartment&locations=${town.geoCode.toUpperCase()}&page=${pageNum}`;
 
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
-      await new Promise(r => setTimeout(r, 2000));
+      // Real evidence found live (2026-07-22), same fix applied to
+      // seloger-arrondissements-scraper.js: a single failed page load
+      // used to immediately end pagination here, silently — one
+      // arrondissement measured at 647 listings in production when
+      // SeLoger's own site showed ~968 for the same search, traced back
+      // to exactly this pattern. Retrying a few times before giving up
+      // distinguishes a transient hiccup from a genuine end.
+      const MAX_PAGE_ATTEMPTS = 3;
+      let pageLoadSucceeded = false;
+      let lastStatus = null;
+      for (let attempt = 1; attempt <= MAX_PAGE_ATTEMPTS; attempt++) {
+        const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => null);
+        await new Promise(r => setTimeout(r, 2000));
+        lastStatus = response ? response.status() : null;
+        try {
+          await page.waitForSelector(getListingSelector(searchType), { timeout: 10000 });
+          pageLoadSucceeded = true;
+          break;
+        } catch (e) {
+          if (attempt < MAX_PAGE_ATTEMPTS) {
+            console.warn(`[SeLoger-${town.slug}] Page ${pageNum}: attempt ${attempt}/${MAX_PAGE_ATTEMPTS} failed (status ${lastStatus}) — retrying after cooldown...`);
+            await new Promise(r => setTimeout(r, 3000 + Math.random() * 2000));
+          }
+        }
+      }
 
-      try {
-        await page.waitForSelector(getListingSelector(searchType), { timeout: 10000 });
-      } catch (e) {
-        // Genuinely zero/out-of-pages for this town — expected occasionally.
+      if (!pageLoadSucceeded) {
+        // Genuinely zero/out-of-pages for this town after every retry,
+        // or a persistent block — either way, expected occasionally.
+        if (lastStatus === 403 || lastStatus === 429) {
+          console.warn(`[SeLoger-${town.slug}] Page ${pageNum}: got HTTP ${lastStatus} (blocked) even after ${MAX_PAGE_ATTEMPTS} attempts — stopping here. This page's listings are likely missing from the count below.`);
+        }
         break;
       }
 
-      const raw = await page.evaluate(extractListings, searchType);
+      const { results: raw, statedCount } = await page.evaluate(extractListings, searchType);
+      if (statedCount != null) statedCountSeen = statedCount;
       let newCount = 0;
       for (const item of raw) {
         if (seenUrls.has(item.url)) continue;
@@ -319,6 +354,21 @@ async function scrapeTown(town, searchType, shardIndex = 0, shardCount = 1) {
     }
 
     const valid = allParsed.filter(l => l.price > 0 || l.priceOnRequest || l.address);
+    // NOTE: address is unconditionally overridden to town.displayName
+    // above, so this filter never actually rejects anything here.
+
+    // Room-share/colocation listings get excluded later, once, across all
+    // sources (see merge-and-generate.js's `!l.isRoomShare` filter), not
+    // here — counted and logged now so any gap vs SeLoger's own stated
+    // total isn't a mystery.
+    const roomShareCount = valid.filter(l => l.isRoomShare).length;
+    const willAppearInFinalOutput = valid.length - roomShareCount;
+    if (statedCountSeen != null) {
+      const pct = ((willAppearInFinalOutput / statedCountSeen) * 100).toFixed(1);
+      console.log(`[SeLoger-${town.slug}] SeLoger states ${statedCountSeen} total listings. We scraped ${allParsed.length} raw (${roomShareCount} are room-share/colocation, excluded downstream) -> ${willAppearInFinalOutput} will appear in final output (${pct}% of SeLoger's stated total).`);
+    } else {
+      console.log(`[SeLoger-${town.slug}] Could not read SeLoger's stated total (h1 didn't match). Scraped ${allParsed.length} raw, ${roomShareCount} room-share (excluded downstream), ${willAppearInFinalOutput} will appear in final output.`);
+    }
 
     // Shard AFTER full pagination completes — see the arrondissement
     // scraper's identical comment for why (every shard sees the full
