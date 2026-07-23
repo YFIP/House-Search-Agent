@@ -146,10 +146,19 @@ function parseListing(rawText) {
   // (?![a-zA-Z]) still rejects false matches like "piecework" (followed by
   // a letter) while allowing a following digit or space through.
   const bedroomsMatch = text.match(/(\d+)\s*(?:bedrooms?|chambres?)(?![a-zA-Z])/i);
-  const bedrooms = bedroomsMatch ? parseInt(bedroomsMatch[1], 10) : null;
+  let bedrooms = bedroomsMatch ? parseInt(bedroomsMatch[1], 10) : null;
 
   const roomsMatch = text.match(/\bT(\d+)\b|\b(\d+)\s*(?:pi[eè]ces?|rooms?)(?![a-zA-Z])/i);
   const rooms = roomsMatch ? parseInt(roomsMatch[1] || roomsMatch[2], 10) : bedrooms;
+
+  // A studio ("1 pièce"/"T1") is one room used as both living and
+  // sleeping space — ads for these never separately state "chambres"
+  // because there's nothing distinct to state, so bedroomsMatch always
+  // legitimately fails to find one and bedrooms was left blank. Per
+  // explicit request: a 1-room listing counts as 1 bedroom, not unknown.
+  if (bedrooms === null && rooms === 1) {
+    bedrooms = 1;
+  }
 
   // Real bug found live via Perenium testing: real listings consistently
   // phrase this as natural prose ("une salle d'eau avec WC", "une salle
