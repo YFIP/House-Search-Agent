@@ -2,16 +2,23 @@ name: Scrape and Deploy Listings
 
 on:
   schedule:
-    # Two triggers covering both possible UTC times for 8 AM Paris time,
-    # since France alternates between CET (UTC+1, winter) and CEST
-    # (UTC+2, summer) — GitHub Actions cron only runs in UTC, so a single
-    # fixed time would be off by an hour for half the year. The
-    # check-schedule job below verifies which one is ACTUALLY correct
-    # right now (via the OS's own Europe/Paris timezone database, which
-    # handles the exact DST transition dates automatically) and skips
-    # the other.
-    - cron: '0 6 * * *'   # 8:00 AM CEST (summer/daylight time)
-    - cron: '0 7 * * *'   # 8:00 AM CET (winter/standard time)
+    # Two triggers covering both possible UTC times for 2 AM US Eastern
+    # time (which lines up with ~8 AM Paris time year-round, since the US
+    # and France both shift their clocks by the same hour for DST, just
+    # on slightly different calendar dates). GitHub Actions cron only
+    # runs in UTC, so a single fixed time would drift by an hour for part
+    # of the year — hence two triggers. Minutes are offset from :00
+    # deliberately, since top-of-the-hour is GitHub's most congested
+    # queue slot and gets delayed the most.
+    #
+    # Both fire daily. check-schedule below no longer tries to match an
+    # exact hour (schedule delivery can be delayed by hours under load,
+    # which was silently skipping legitimate runs) — instead it checks
+    # whether today's US-Eastern-date scrape has already completed, so
+    # whichever trigger arrives first (however late) runs, and the other
+    # is correctly skipped as a same-day duplicate.
+    - cron: '13 6 * * *'   # ~2:13 AM EDT (Eastern Daylight Time, UTC-4)
+    - cron: '13 7 * * *'   # ~2:13 AM EST (Eastern Standard Time, UTC-5)
   workflow_dispatch:
 
 permissions:
@@ -20,30 +27,34 @@ permissions:
   id-token: write
 
 jobs:
-  # Verifies it's genuinely 8 AM in Paris right now before anything else
-  # runs — necessary because both cron triggers above fire daily, but
-  # only one of them is actually correct for the current season. Always
-  # proceeds for manual (workflow_dispatch) runs regardless of time.
+  # Runs once per US-Eastern calendar day, regardless of which of the two
+  # triggers above fires first or how late GitHub delivers it. Reads the
+  # date of the last successful run (a marker file committed by
+  # merge-and-commit) and only proceeds if today hasn't run yet. Manual
+  # runs (workflow_dispatch) always proceed regardless of date.
   check-schedule:
     runs-on: ubuntu-latest
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}
     steps:
-      - name: Check if it's actually 8 AM Paris time right now
+      - uses: actions/checkout@v4
+      - name: Check if today's scrape has already run
         id: check
         run: |
           if [ "${{ github.event_name }}" != "schedule" ]; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
-            echo "Manually triggered — proceeding regardless of time."
+            echo "Manually triggered — proceeding regardless of date."
             exit 0
           fi
-          CURRENT_PARIS_HOUR=$(TZ=Europe/Paris date +%H)
-          echo "Current Paris local hour: $CURRENT_PARIS_HOUR"
-          if [ "$CURRENT_PARIS_HOUR" = "08" ]; then
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-          else
+          TODAY_NY=$(TZ=America/New_York date +%Y-%m-%d)
+          LAST_RUN=$(cat .last-scrape-date 2>/dev/null || echo "none")
+          echo "Today (US Eastern date): $TODAY_NY"
+          echo "Last successful scrape date: $LAST_RUN"
+          if [ "$LAST_RUN" = "$TODAY_NY" ]; then
             echo "should_run=false" >> "$GITHUB_OUTPUT"
-            echo "Not actually 8 AM in Paris right now — skipping (the other seasonal trigger will run instead)."
+            echo "Already ran today — skipping (this is the other seasonal trigger, or a delayed re-delivery)."
+          else
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
           fi
 
   # Runs Barnes, Barnes-Suburbs, Junot, Book-a-Flat, and Perenium in one
@@ -580,11 +591,13 @@ jobs:
           GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
           GOOGLE_SHEET_ID: '1maB2BiEzEK2XwC-vVHJGJuigdLGSUi9Yyh3psVWHt_I'
         run: node sync-to-google-sheets.js listings.json listings-sale.json
+      - name: Record today's run date
+        run: TZ=America/New_York date +%Y-%m-%d > .last-scrape-date
       - name: Commit updated Excel files to repo
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          git add listings.xlsx listings-sale.xlsx
+          git add listings.xlsx listings-sale.xlsx .last-scrape-date
           git commit -m "Update listings: $(date -u +'%Y-%m-%d %H:%M UTC')" || echo "No changes to commit"
           git push
       - name: Prepare Pages output
