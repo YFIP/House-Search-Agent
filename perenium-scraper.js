@@ -1,5 +1,14 @@
 // perenium-scraper.js
 //
+// FIX (this pass): enrichWithDetails() intentionally preferred the
+// detail-page value over the summary-card value (correct — detail pages
+// are more reliable here), but did so with a plain unconditional
+// assignment, which meant a FAILED detail-page fetch (returning nulls)
+// still overwrote a real value the summary-card pass had already found.
+// Now uses mergeFeature(detailValue, summaryValue) — same stated
+// preference (detail page wins when present), but a failed fetch no
+// longer erases a known-good fallback.
+//
 // VERIFIED LIVE:
 //   - https://www.perenium.eu/location.php (page 1) — "14 annonces" total,
 //     tiny inventory, well under our 100-per-source cap.
@@ -30,7 +39,7 @@
 //     surface a readable location from the listing's own title text.
 
 const parseListing = require('./parse-listing');
-const { extractDetailFeatures } = require('./parse-listing');
+const { extractDetailFeatures, mergeFeature } = require('./parse-listing');
 
 const BASE_URL = 'https://www.perenium.eu/location.php';
 const LISTING_SELECTOR = 'a[href*="/fiche-"]';
@@ -59,14 +68,6 @@ async function mapWithConcurrency(items, limit, fn) {
   return results;
 }
 
-// Real evidence found live on SeLoger: visiting individual listing
-// detail pages too fast/too many at once can trigger anti-bot blocking,
-// silently returning tiny placeholder pages instead of real content.
-// Applying the same cautious approach here as a safeguard, even though
-// Perenium's own blocking behavior (if any) hasn't been directly tested -
-// low concurrency, small delays, and detecting+retrying suspiciously
-// short responses costs little given Perenium's tiny (~14-19) listing
-// count, and protects against the same failure mode if it exists here too.
 const DETAIL_FETCH_CONCURRENCY = 2;
 
 async function fetchListingDetails(browser, url, isRetry = false) {
@@ -80,8 +81,6 @@ async function fetchListingDetails(browser, url, isRetry = false) {
     const bodyText = await page.evaluate(() => document.body.innerText || '');
     await page.close();
 
-    // Same threshold used for SeLoger - a genuine listing detail page
-    // should have real substantive content, not a near-empty placeholder.
     if (bodyText.length < 500 && !isRetry) {
       await new Promise(r => setTimeout(r, 3000 + Math.random() * 2000));
       return fetchListingDetails(browser, url, true);
@@ -101,16 +100,16 @@ async function enrichWithDetails(browser, listings) {
   );
   return listings.map((listing, i) => {
     const d = details[i];
-    // Matches the proven pattern used for SeLoger: elevator/balcony/
-    // furnished always take the detail-page value directly (detail
-    // pages are far more reliable for these than the brief summary
-    // card), while bathrooms/bedrooms use a fallback since those can
-    // genuinely already be populated correctly from the summary card.
+    // Detail pages are the primary/preferred source here (more reliable
+    // than the brief summary card), so the detail-page value wins when
+    // it's actually present — but a failed fetch (d.field === null) now
+    // falls back to whatever the summary-card pass already found,
+    // instead of unconditionally overwriting it with null.
     return {
       ...listing,
-      elevator: d.elevator,
-      balcony: d.balcony,
-      furnished: d.furnished,
+      elevator: mergeFeature(d.elevator, listing.elevator),
+      balcony: mergeFeature(d.balcony, listing.balcony),
+      furnished: mergeFeature(d.furnished, listing.furnished),
       bathrooms: listing.bathrooms != null ? listing.bathrooms : d.bathroomsFromDetail,
       bedrooms: listing.bedrooms != null ? listing.bedrooms : d.bedroomsFromDetail
     };
@@ -154,8 +153,6 @@ async function scrapePerenium(searchType = 'rent') {
     for (let pageNum = 1; pageNum <= MAX_PAGES; pageNum++) {
       const page = await browser.newPage();
       await page.setDefaultNavigationTimeout(20000);
-      // Sale confirmed live at 19 listings across 2 pages, same
-      // ?Page=N mechanism as rent — just a different base path.
       const saleBaseUrl = 'https://www.perenium.eu/vente.php';
       const currentBaseUrl = searchType === 'sale' ? saleBaseUrl : BASE_URL;
       const url = pageNum === 1 ? currentBaseUrl : `${currentBaseUrl}?Page=${pageNum}`;
@@ -177,9 +174,6 @@ async function scrapePerenium(searchType = 'rent') {
       let newCount = 0;
       for (const item of raw) {
         if (seenUrls.has(item.url)) continue;
-        // Real evidence: a "VENDU" (sold) listing was found mixed into
-        // the sale page's results alongside genuinely available ones -
-        // skip it rather than presenting it as available.
         if (searchType === 'sale' && /\bvendu\b/i.test(item.rawText)) continue;
         seenUrls.add(item.url);
         const listing = parseListing(item.rawText);
@@ -187,16 +181,16 @@ async function scrapePerenium(searchType = 'rent') {
         listing.source = 'Perenium';
         listing.searchType = searchType;
         listing.isExactListing = true;
-      // Summary-card text rarely states elevator/furnished/bathroom -
-      // real detail-page enrichment (below, after this loop) is the
-      // primary source now. This fills in anything already available
-      // from the summary as a fallback only.
-      const details = extractDetailFeatures(item.rawText);
-      if (listing.elevator == null) listing.elevator = details.elevator;
-      if (listing.balcony == null) listing.balcony = details.balcony;
-      if (listing.furnished == null) listing.furnished = details.furnished;
-      if (listing.bathrooms == null) listing.bathrooms = details.bathroomsFromDetail;
-      if (listing.bedrooms == null) listing.bedrooms = details.bedroomsFromDetail;
+        // Summary-card text rarely states elevator/furnished/bathroom -
+        // real detail-page enrichment (below, after this loop) is the
+        // primary source now. This fills in anything already available
+        // from the summary as a fallback only.
+        const details = extractDetailFeatures(item.rawText);
+        if (listing.elevator == null) listing.elevator = details.elevator;
+        if (listing.balcony == null) listing.balcony = details.balcony;
+        if (listing.furnished == null) listing.furnished = details.furnished;
+        if (listing.bathrooms == null) listing.bathrooms = details.bathroomsFromDetail;
+        if (listing.bedrooms == null) listing.bedrooms = details.bedroomsFromDetail;
         allListings.push(listing);
         newCount++;
       }
