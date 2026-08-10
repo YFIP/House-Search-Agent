@@ -1,5 +1,14 @@
 // danielfeau-scraper.js
 //
+// FIX (this pass): enrichWithDetails() used to unconditionally overwrite
+// elevator/balcony/furnished with whatever the detail-page fetch
+// returned — including on a FAILED fetch, which returns nulls. That
+// silently wiped out values the earlier summary-card pass (in
+// scrapeLocation, below) had already found correctly. Now uses the
+// shared mergeFeature() helper: a successful detail-page fetch still
+// wins (it's the more complete source), but a failed one just leaves
+// the summary-card value in place instead of erasing it.
+//
 // VERIFIED LIVE:
 //   - https://danielfeau.com/fr/location/paris (all-Paris, page 1 of 10,
 //     confirmed real listings with correct France-only scope — no
@@ -19,17 +28,10 @@
 //     count — fixed at the shared-parser level, benefits every source.
 
 const parseListing = require('./parse-listing');
-const { extractDetailFeatures } = require('./parse-listing');
+const { extractDetailFeatures, mergeFeature } = require('./parse-listing');
 
 const LISTING_SELECTOR = 'a[href*="/annonce-immobiliere/"]';
-// Raised after finding real evidence of pagination up to page 18 for
-// JUST the 16th arrondissement's buy listings alone (vs the original 10
-// pages confirmed for the combined all-Paris RENT page) - buy volume
-// runs considerably higher here.
 const MAX_PAGES = 25;
-// Overall cap raised substantially from the original 100 - real evidence
-// shows buy listings alone could plausibly exceed 100 from the Paris
-// page before suburbs are even reached.
 const MAX_TOTAL_LISTINGS = 600;
 
 async function getBrowser() {
@@ -55,11 +57,6 @@ async function mapWithConcurrency(items, limit, fn) {
   return results;
 }
 
-// Same cautious approach proven for SeLoger - low concurrency, small
-// delays, and detecting+retrying suspiciously short responses. Given
-// DanielFeau can have up to 600 listings, this now runs as its own
-// isolated job with a longer timeout rather than sharing scrape-main's
-// budget, so there's no time pressure forcing a faster/riskier approach.
 const DETAIL_FETCH_CONCURRENCY = 2;
 
 async function fetchListingDetails(browser, url, isRetry = false) {
@@ -94,9 +91,12 @@ async function enrichWithDetails(browser, listings) {
     const d = details[i];
     return {
       ...listing,
-      elevator: d.elevator,
-      balcony: d.balcony,
-      furnished: d.furnished,
+      // FIXED: mergeFeature prefers the detail-page value when present,
+      // but falls back to whatever the summary-card pass already found
+      // instead of clobbering it with a failed-fetch null.
+      elevator: mergeFeature(d.elevator, listing.elevator),
+      balcony: mergeFeature(d.balcony, listing.balcony),
+      furnished: mergeFeature(d.furnished, listing.furnished),
       bathrooms: listing.bathrooms != null ? listing.bathrooms : d.bathroomsFromDetail,
       bedrooms: listing.bedrooms != null ? listing.bedrooms : d.bedroomsFromDetail
     };
@@ -130,7 +130,6 @@ function extractListings() {
   return results;
 }
 
-// Scrapes ONE location's listing pages, handling its own pagination.
 async function scrapeLocation(browser, baseUrl, maxPages, searchType, seenUrls, allListings) {
   for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
     const page = await browser.newPage();
@@ -160,10 +159,11 @@ async function scrapeLocation(browser, baseUrl, maxPages, searchType, seenUrls, 
       listing.source = 'DanielFeau';
       listing.searchType = searchType;
       listing.isExactListing = true;
-      // Applying the same detail-feature extraction directly on the raw
-      // summary text (same pattern proven for Junot/Eiffel Housing) -
-      // returns null honestly for fields not present in the text, picks
-      // up real data for fields that are.
+      // Same pattern proven for Junot/Eiffel Housing: try the cheap
+      // summary-card text first — returns null honestly for fields not
+      // present in the text, picks up real data for fields that are.
+      // enrichWithDetails() below then only OVERRIDES this with a
+      // detail-page value when the detail fetch actually succeeded.
       const details = extractDetailFeatures(item.rawText);
       if (listing.elevator == null) listing.elevator = details.elevator;
       if (listing.balcony == null) listing.balcony = details.balcony;
@@ -193,9 +193,6 @@ async function scrapeDanielFeau(searchType = 'rent') {
     const allListings = [];
     const seenUrls = new Set();
 
-    // Confirmed asymmetric URL structure: buy (vente) requires
-    // "/appartements/" in the path, rent (location) does not — verified
-    // live via each URL's own footer navigation links.
     const mainUrl = searchType === 'sale'
       ? 'https://danielfeau.com/fr/listing/france/vente/appartements/paris'
       : 'https://danielfeau.com/fr/location/paris';
