@@ -1,52 +1,36 @@
 // seloger-suburbs-scraper.js
 //
+// FIX (this pass): same fix as seloger-arrondissements-scraper.js — this
+// file never called extractDetailFeatures() on the summary-card/
+// search-result text at all, relying 100% on the detail-page fetch for
+// elevator/balcony/furnished. Real evidence (live SeLoger search results)
+// shows the search-result card text is frequently already packed with
+// "meublé" directly ("appartement meublé", "LOCATION MEUBLEE", etc.),
+// contradicting this file's earlier assumption that furnished only lives
+// in the detail page's "Caractéristiques" checklist. Combined with this
+// source's real, documented anti-bot blocking on detail-page fetches
+// (DataDome), having no summary-card fallback meant every blocked fetch
+// produced a hard "Not mentioned" even when the answer was already
+// sitting in text already scraped. Added the same summary-pass +
+// mergeFeature pattern proven on every other source.
+//
 // Covers 13 western Paris suburb towns — the same corridor Junot itself
 // defines as its western coverage area (Neuilly-sur-Seine, Levallois-
 // Perret, Boulogne-Billancourt, Rueil-Malmaison, Suresnes, Puteaux,
 // Saint-Cloud, Garches, Vaucresson, Marnes-la-Coquette, Ville-d'Avray,
 // Le Vésinet, Saint-Germain-en-Laye) — NOT the full ~51 towns used for
 // Junot/Barnes, because SeLoger requires an individually verified geo-code
-// per town (not a simple slug pattern like Junot/Barnes). Each code below
-// was individually confirmed live via search, not guessed or derived from
-// a formula — SeLoger's geo-codes are arbitrary IDs, e.g. Paris is
-// ad08fr31096 and Neuilly-sur-Seine is ad08fr36623, no discoverable
-// relationship between them.
-//
-// Each town uses the exact same extraction + detail-page-enrichment
-// pattern as the main Paris seloger-scraper.js (first page only, no
-// pagination attempted — same design decision as Paris, since SeLoger's
-// pagination is unsolved for this URL template regardless of location).
+// per town (not a simple slug pattern like Junot/Barnes).
 
 const parseListing = require('./parse-listing');
-const { extractDetailFeatures } = require('./parse-listing');
+const { extractDetailFeatures, mergeFeature } = require('./parse-listing');
 
-// Same real bug fix as seloger-arrondissements-scraper.js: hardcoded
-// rent-only selector caused every sale job to silently return 0
-// listings.
 function getListingSelector(searchType) {
   return searchType === 'sale' ? 'a[href*="/annonces/achat/"]' : 'a[href*="/annonces/locations/"]';
 }
-// Real evidence found live (in seloger-arrondissements-scraper.js):
-// raising this to 5 was WRONG - detail-page requests started returning
-// tiny ~430-character blocked/challenge pages (vs normal 50,000-90,000
-// characters) after the first ~8 requests in a batch. This is
-// DataDome's anti-bot system detecting rapid-fire volume. Lowered to 2
-// plus added inter-request spacing and retry-on-block logic below.
 const DETAIL_FETCH_CONCURRENCY = 2;
-// FIXED: was 3, causing nested concurrency (3 towns x 3 detail-fetches =
-// up to 9-12 simultaneous pages on ONE browser). Live evidence proved this
-// broke real data: Puteaux has 173 active listings (confirmed via direct
-// fetch), but the scraper returned 0 — the first 3 towns (matching the old
-// concurrency of 3) succeeded, every town after failed silently, strongly
-// suggesting the browser degraded under cumulative simultaneous load and
-// subsequent pages loaded blank (miscounted as "zero results" rather than
-// an error, since a blank page just has no listings to find).
-// Sequential town processing caps total simultaneous pages at
-// DETAIL_FETCH_CONCURRENCY + 1, not town_concurrency x detail_concurrency.
 const TOWN_CONCURRENCY = 1;
 
-// { slug, postalCode, geoCode } — geoCode individually verified live for
-// every entry, not derived from a pattern.
 const SUBURB_TOWNS = [
   { slug: 'neuilly-sur-seine', postal: '92200', geoCode: 'ad08fr36623', displayName: 'Neuilly-sur-Seine' },
   { slug: 'boulogne-billancourt', postal: '92100', geoCode: 'ad08fr36603', displayName: 'Boulogne-Billancourt' },
@@ -61,11 +45,6 @@ const SUBURB_TOWNS = [
   { slug: 'garches', postal: '92380', geoCode: 'ad08fr36613', displayName: 'Garches' },
   { slug: 'marnes-la-coquette', postal: '92430', geoCode: 'ad08fr36619', displayName: 'Marnes-la-Coquette' },
   { slug: 'ville-d-avray', postal: '92410', geoCode: 'ad08fr36633', displayName: "Ville-d'Avray" },
-  // 8 towns added later — these show up as clickable chips on the
-  // frontend (via other sources' broader suburb coverage, like Junot's
-  // 51 towns) but were never actually included in SeLoger's own suburb
-  // list until now. Each geoCode individually verified live, same as
-  // the original 13 above.
   { slug: 'courbevoie', postal: '92400', geoCode: 'ad08fr36611', displayName: 'Courbevoie' },
   { slug: 'versailles', postal: '78000', geoCode: 'ad08fr32611', displayName: 'Versailles' },
   { slug: 'issy-les-moulineaux', postal: '92130', geoCode: 'ad08fr36616', displayName: 'Issy-les-Moulineaux' },
@@ -77,15 +56,6 @@ const SUBURB_TOWNS = [
 ];
 
 async function getBrowser() {
-  // Switched to puppeteer-extra + stealth plugin after real evidence of
-  // SeLoger's anti-bot system (DataDome) partially blocking even isolated,
-  // separately-run scraping jobs. This patches common headless-Chrome
-  // automation tells (navigator.webdriver, missing plugins, etc). Being
-  // realistic about this: published 2026 research shows DataDome
-  // specifically has detection methods for this exact plugin, and
-  // increasingly targets network/TLS-level fingerprints a JS-level patch
-  // can't reach at all — this is worth trying (free, addresses a real gap
-  // we hadn't touched), not a guaranteed fix.
   const puppeteer = require('puppeteer-extra');
   const StealthPlugin = require('puppeteer-extra-plugin-stealth');
   puppeteer.use(StealthPlugin());
@@ -109,19 +79,6 @@ function withTimeout(promise, ms, label) {
   ]);
 }
 
-// Extracts the page's own stated listing count from its title/heading —
-// e.g. "2 annonces appartements à louer Marnes-la-Coquette 92430" or
-// "173 annonces Appartements à louer Puteaux 92800". This is used as a
-// self-correcting cap: real evidence showed a sparse town (Marnes-la-
-// Coquette, genuinely 2 listings) had its results padded to 32 by
-// SeLoger's own "Plus d'annonces à proximité" (more listings nearby)
-// filler section, which shows suggested listings from NEIGHBORING towns
-// directly on the same page when a search has few genuine matches. Our
-// selector can't distinguish "genuine local match" from "nearby filler"
-// by DOM structure alone, but the page's own stated count gives ground
-// truth — capping to it (keeping the first N in DOM order, since filler
-// content consistently appears after genuine results in every case
-// checked) removes the contamination without needing per-town DOM work.
 function extractListings(searchType) {
   const results = [];
   const seen = new Set();
@@ -147,18 +104,6 @@ function extractListings(searchType) {
     }
   }
 
-  // FIXED — same real Puppeteer serialization bug found across all 3
-  // SeLoger scrapers: page.evaluate(extractListings) only sends THIS
-  // function's own source into the browser, not a separate
-  // extractStatedCount() function it referenced. Inlined here.
-  // Real bug found live (2026-07-22), same fix applied to
-  // seloger-arrondissements-scraper.js: (1) this only matched "N
-  // annonces" but the real h1 format is "N appartements à louer" / "N
-  // maisons et appartements à louer" — never "annonces" — so statedCount
-  // was silently always null; (2) concatenating document.title + h1 with
-  // a single space could fuse an adjacent postal code into the count
-  // (garbage like "750161041"). Fixed by reading the h1 alone, anchored
-  // to its start, since the count is always the very first thing in it.
   const h1Text = document.querySelector('h1') ? document.querySelector('h1').innerText : '';
   const countMatch = h1Text.match(/^\s*(\d[\d\s]*?)\s*(?:annonces|appartements|maisons)/i);
   const statedCount = countMatch ? parseInt(countMatch[1].replace(/\s/g, ''), 10) : null;
@@ -186,12 +131,10 @@ async function mapWithConcurrency(items, limit, fn) {
 async function fetchListingDetails(browser, url, isRetry = false) {
   let page;
   try {
-    // Small randomized delay before each request - spaces out requests
-    // to reduce the chance of triggering DataDome's rate-based blocking.
     await new Promise(r => setTimeout(r, 400 + Math.random() * 400));
 
     page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'); // fixes 403 blocks from bot-detection checking for the default 'HeadlessChrome' signature (confirmed root cause via live ParisRental testing)
+    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
     await page.setDefaultNavigationTimeout(20000);
     const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
 
@@ -204,11 +147,6 @@ async function fetchListingDetails(browser, url, isRetry = false) {
 
     await page.close();
 
-    // Real bug found live: checking only bodyText.length missed a whole
-    // class of failures - a genuine 403 block returns instantly with
-    // empty content, and extractDetailFeatures('') on empty text
-    // returns elevator:false/balcony:false (their real defaults) rather
-    // than null, so the old "all fields null" check never caught this.
     const status = response ? response.status() : null;
     const isBlocked = status === 403 || status === 429 || bodyText.length < 2000;
     if (isBlocked && !isRetry) {
@@ -220,7 +158,6 @@ async function fetchListingDetails(browser, url, isRetry = false) {
     result._wasBlocked = isBlocked;
     return result;
   } catch (error) {
-    console.log(`[SeLoger-Suburbs] Detail fetch failed for ${url}: ${error.message}`);
     if (page) { try { await page.close(); } catch (e) {} }
     return { elevator: null, balcony: null, furnished: null, bathroomsFromDetail: null, bedroomsFromDetail: null, _wasBlocked: true };
   }
@@ -243,45 +180,31 @@ async function enrichWithDetails(listings, label) {
         bedroomsFromDetail = null;
       }
       const bedrooms = listing.bedrooms != null ? listing.bedrooms : bedroomsFromDetail;
-      return { ...listing, elevator: d.elevator, balcony: d.balcony, furnished: d.furnished, bathrooms, bedrooms };
+      // FIXED: same mergeFeature fix as seloger-arrondissements-scraper.js
+      // — was unconditional `d.elevator`/`d.balcony`/`d.furnished`.
+      return {
+        ...listing,
+        elevator: mergeFeature(d.elevator, listing.elevator),
+        balcony: mergeFeature(d.balcony, listing.balcony),
+        furnished: mergeFeature(d.furnished, listing.furnished),
+        bathrooms,
+        bedrooms
+      };
     });
   } finally {
     await freshBrowser.close();
   }
 }
 
-// FIXED — sequential-only processing (removing town-level concurrency)
-// did NOT fix the earlier bug: live evidence showed even fully sequential
-// runs still failed after town #2-3 (Suresnes, which worked before, now
-// also failed). This points to a different cause than nested concurrency:
-// ONE long-lived browser instance accumulating enough page-opens across
-// MANY towns (each town does its own listing page + ~20-30 detail-page
-// visits) eventually degrades — by town 3 we'd already done 100+ total
-// page opens on a single browser. Launching a FRESH browser per town
-// costs a little startup overhead (~1-2s each) but avoids any cumulative
-// degradation entirely, since each town starts with a clean browser.
-// shardIndex/shardCount: same fix applied to the arrondissement scraper —
-// real evidence found live (2026-07-21) that some suburbs (e.g.
-// Boulogne-Billancourt: 1522 sale listings) need up to ~70 minutes just
-// for detail-page enrichment, blowing past even a generously bumped job
-// timeout. Every shard does its own full pagination but only enriches
-// the fraction of listings where `index % shardCount === shardIndex`.
-// Defaults (0, 1) preserve old single-job behavior for any caller that
-// doesn't pass these.
 async function scrapeTown(town, searchType, shardIndex = 0, shardCount = 1) {
   let browser;
   let page;
   try {
     browser = await getBrowser();
     page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'); // fixes 403 blocks from bot-detection checking for the default 'HeadlessChrome' signature (confirmed root cause via live ParisRental testing)
+    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
     await page.setDefaultNavigationTimeout(20000);
 
-    // Real pagination confirmed live via ?LISTING-LISTpg=N (see
-    // seloger-arrondissements-scraper.js for the full research note). No
-    // hardcoded page/result cap — same reasoning as the arrondissement
-    // scraper: a fixed cap silently drops real listings in denser towns.
-    // Loop runs until a page yields zero new listings.
     const allParsed = [];
     const seenUrls = new Set();
     let statedCountSeen = null;
@@ -290,13 +213,6 @@ async function scrapeTown(town, searchType, shardIndex = 0, shardCount = 1) {
       const distributionType = searchType === 'sale' ? 'Buy' : 'Rent';
       const url = `https://www.seloger.com/classified-search?distributionTypes=${distributionType}&estateTypes=Apartment&locations=${town.geoCode.toUpperCase()}&page=${pageNum}`;
 
-      // Real evidence found live (2026-07-22), same fix applied to
-      // seloger-arrondissements-scraper.js: a single failed page load
-      // used to immediately end pagination here, silently — one
-      // arrondissement measured at 647 listings in production when
-      // SeLoger's own site showed ~968 for the same search, traced back
-      // to exactly this pattern. Retrying a few times before giving up
-      // distinguishes a transient hiccup from a genuine end.
       const MAX_PAGE_ATTEMPTS = 3;
       let pageLoadSucceeded = false;
       let lastStatus = null;
@@ -317,8 +233,6 @@ async function scrapeTown(town, searchType, shardIndex = 0, shardCount = 1) {
       }
 
       if (!pageLoadSucceeded) {
-        // Genuinely zero/out-of-pages for this town after every retry,
-        // or a persistent block — either way, expected occasionally.
         if (lastStatus === 403 || lastStatus === 429) {
           console.warn(`[SeLoger-${town.slug}] Page ${pageNum}: got HTTP ${lastStatus} (blocked) even after ${MAX_PAGE_ATTEMPTS} attempts — stopping here. This page's listings are likely missing from the count below.`);
         }
@@ -336,14 +250,17 @@ async function scrapeTown(town, searchType, shardIndex = 0, shardCount = 1) {
         listing.source = 'SeLoger';
         listing.searchType = searchType;
         listing.isExactListing = true;
-        // Override the parsed address with the KNOWN town name — we
-        // already know exactly which town this is (it's the URL we
-        // chose), so this is both more reliable and perfectly
-        // consistent than trying to re-derive it from noisy card text,
-        // which was shown to sometimes grab a floor number ("1 / 12"),
-        // postal code fragment, or agency name instead of a real
-        // location.
         listing.address = town.displayName;
+        // NEW — same fix as every other source and as
+        // seloger-arrondissements-scraper.js: check the search-result
+        // card text directly before relying solely on the (often
+        // blocked) detail-page fetch.
+        const details = extractDetailFeatures(item.rawText);
+        listing.elevator = details.elevator;
+        listing.balcony = details.balcony;
+        listing.furnished = details.furnished;
+        if (listing.bathrooms == null) listing.bathrooms = details.bathroomsFromDetail;
+        if (listing.bedrooms == null) listing.bedrooms = details.bedroomsFromDetail;
         allParsed.push(listing);
         newCount++;
       }
@@ -354,13 +271,7 @@ async function scrapeTown(town, searchType, shardIndex = 0, shardCount = 1) {
     }
 
     const valid = allParsed.filter(l => l.price > 0 || l.priceOnRequest || l.address);
-    // NOTE: address is unconditionally overridden to town.displayName
-    // above, so this filter never actually rejects anything here.
 
-    // Room-share/colocation listings get excluded later, once, across all
-    // sources (see merge-and-generate.js's `!l.isRoomShare` filter), not
-    // here — counted and logged now so any gap vs SeLoger's own stated
-    // total isn't a mystery.
     const roomShareCount = valid.filter(l => l.isRoomShare).length;
     const willAppearInFinalOutput = valid.length - roomShareCount;
     if (statedCountSeen != null) {
@@ -370,16 +281,11 @@ async function scrapeTown(town, searchType, shardIndex = 0, shardCount = 1) {
       console.log(`[SeLoger-${town.slug}] Could not read SeLoger's stated total (h1 didn't match). Scraped ${allParsed.length} raw, ${roomShareCount} room-share (excluded downstream), ${willAppearInFinalOutput} will appear in final output.`);
     }
 
-    // Shard AFTER full pagination completes — see the arrondissement
-    // scraper's identical comment for why (every shard sees the full
-    // listing set and independently picks its own slice).
     const shard = shardCount > 1 ? valid.filter((_, i) => i % shardCount === shardIndex) : valid;
     if (shardCount > 1) {
       console.log(`[SeLoger-${town.slug}] Shard ${shardIndex}/${shardCount}: enriching ${shard.length}/${valid.length} listings`);
     }
 
-    // Close the pagination browser/page before enrichment, which now
-    // launches a genuinely fresh browser of its own.
     await page.close();
     await browser.close();
     browser = null;
@@ -401,18 +307,6 @@ async function scrapeSeLogerSuburbs(searchType = 'rent') {
 
     let completed = 0;
     const start = Date.now();
-    // Sequential (TOWN_CONCURRENCY=1) since each town now gets its own
-    // fresh browser — no benefit to overlapping them, and doing so would
-    // reintroduce the original nested-resource-usage risk.
-    //
-    // NEW: deliberate delay between towns. Live evidence ruled out browser
-    // reuse as the cause (fresh browser per town still failed identically
-    // after town #2), which points instead to IP-based rate-limiting —
-    // consistent with SeLoger's confirmed DataDome usage and prior research
-    // noting it "can trigger blocks after a few successful requests." If
-    // this is frequency-based rather than a hard per-run cap, spacing
-    // requests out should let more towns through. This is a genuine test,
-    // not a guaranteed fix.
     const DELAY_BETWEEN_TOWNS_MS = 15000;
     let isFirst = true;
     const results = await mapWithConcurrency(SUBURB_TOWNS, TOWN_CONCURRENCY, async (town) => {
