@@ -3,19 +3,41 @@
 // (javascript:annonces_suivantes()) to reach up to MAX_LISTINGS before any
 // price/room/etc. filtering happens — filtering is applied later, in
 // search.js, on the full pulled set.
+//
+// FIXES (this pass), three separate issues found:
+//
+// 1. This file never called extractDetailFeatures() on the summary-card
+//    text at all — elevator/balcony/furnished only ever came from the
+//    (optional, see #2) detail-page enrichment step. Added a summary-card
+//    pass in scrapeBarnes(), same pattern already proven for Junot/
+//    DanielFeau/Book-a-Flat/Perenium/Barnes-Suburbs, so these fields have
+//    a real value even before/without detail-page enrichment.
+//
+// 2. `fetchDetails` defaulted to `false`, meaning any call site that
+//    forgot to explicitly opt in got a furnished-blind dataset with no
+//    indication anything was wrong. Given elevator/balcony/furnished are
+//    genuinely richer on the detail page (per the live evidence in this
+//    file's own comments), defaulted to `true` instead — the caller can
+//    still explicitly pass `fetchDetails: false` to skip it if needed for
+//    a time-budget reason.
+//
+// 3. enrichWithDetails() used `{ ...listing, ...details[i] }`, which (a)
+//    unconditionally overwrote elevator/balcony/furnished with a failed
+//    fetch's nulls, erasing whatever the new summary-card pass (#1) had
+//    already found, and (b) added bathroomsFromDetail/bedroomsFromDetail
+//    as their OWN new keys on the listing object without ever merging
+//    them into the actual bathrooms/bedrooms fields the rest of the app
+//    reads — meaning that data was captured then silently discarded.
+//    Rewritten to use the shared mergeFeature() helper and to merge into
+//    the correct field names.
 
 const { getBarnesConfig } = require('./source-config');
 const parseListing = require('./parse-listing');
-const { extractDetailFeatures } = require('./parse-listing');
+const { extractDetailFeatures, mergeFeature } = require('./parse-listing');
 
-// Caps made type-aware: rent (146 real listings) and buy (938 real
-// listings) are wildly different scales, but previously shared one
-// MAX_LISTINGS=100 that under-captured BOTH. Each set generously above
-// its own real confirmed total (see source-config.js) to comfortably
-// capture full inventory with margin.
 const MAX_LISTINGS_BY_TYPE = { rent: 200, sale: 1000 };
 const MAX_PAGE_CLICKS_BY_TYPE = { rent: 15, sale: 50 };
-const DETAIL_FETCH_CONCURRENCY = 3; // keep modest — 100 detail pages is already a lot more load on Barnes than the fast path
+const DETAIL_FETCH_CONCURRENCY = 3;
 
 async function getBrowser() {
   const browserWSEndpoint = process.env.CATALYST_CDP_URL;
@@ -46,11 +68,6 @@ async function getBrowser() {
   return { browser, mode: 'local' };
 }
 
-// Wraps any promise with a hard timeout — used specifically for browser
-// launch/connect, which had NO timeout protection before. Every other wait
-// in this file (navigation, selectors, clicks) already had one; a hang
-// during launch itself could previously run forever with nothing to catch
-// it, only stopped by GitHub Actions' own 6-hour job ceiling.
 function withTimeout(promise, ms, label) {
   return Promise.race([
     promise,
@@ -73,16 +90,6 @@ async function dismissCookieBanner(page) {
   }).catch(() => {});
 }
 
-// Clicks "Next listings" repeatedly until we hit MAX_LISTINGS, run out of
-// new listings to load, or hit the safety click cap — whichever comes first.
-//
-// IMPORTANT: we count UNIQUE listing URLs, not raw querySelectorAll(...).length.
-// Each listing on this site has multiple <a href="/ref-..."> tags pointing
-// at the same URL (thumbnail images + title link), so a raw node count
-// overcounts by roughly 4x. Live testing caught this: the loop was stopping
-// after 1 click because raw count hit 104, while only ~24 *unique* listings
-// had actually loaded. Counting unique hrefs matches what extract() itself
-// dedupes down to, so the stopping condition and the final output agree.
 async function countUniqueListings(page, selector) {
   return page.evaluate((sel) => {
     const anchors = Array.from(document.querySelectorAll(sel));
@@ -94,10 +101,6 @@ async function collectWithPagination(page, config, maxListings, maxPageClicks) {
   let previousCount = 0;
   let clicks = 0;
 
-  // Diagnostics: surface anything the page itself logs or errors on,
-  // since "the click did nothing" could mean several different things
-  // (blocked by an overlay, a JS error, bot detection, etc.) and we need
-  // to see which.
   page.on('console', msg => console.log(`[Barnes][page console] ${msg.type()}: ${msg.text()}`));
   page.on('pageerror', err => console.log(`[Barnes][page error] ${err.message}`));
 
@@ -120,10 +123,6 @@ async function collectWithPagination(page, config, maxListings, maxPageClicks) {
 
     previousCount = currentCount;
 
-    // PRIMARY: call the underlying function directly. This is more
-    // reliable than a simulated DOM click on a javascript: href, which
-    // can silently no-op if an overlay is intercepting the click,
-    // headless detection blocks it, or the click coordinates miss.
     const calledDirectly = await page.evaluate(() => {
       if (typeof window.annonces_suivantes === 'function') {
         try {
@@ -137,8 +136,6 @@ async function collectWithPagination(page, config, maxListings, maxPageClicks) {
     });
     console.log(`[Barnes] Direct function call result: ${calledDirectly}`);
 
-    // FALLBACK: if the function genuinely isn't reachable on window,
-    // fall back to a real simulated click.
     if (calledDirectly === 'not found on window') {
       console.log('[Barnes] Falling back to simulated click...');
       await nextButton.click().catch(e => console.log(`[Barnes] Click threw: ${e.message}`));
@@ -165,9 +162,6 @@ async function collectWithPagination(page, config, maxListings, maxPageClicks) {
   return page.evaluate(config.extract);
 }
 
-// Simple concurrency-limited map, same pattern used elsewhere in this
-// codebase — runs at most `limit` fetches at a time so we don't hammer
-// Barnes with 100 simultaneous requests.
 async function mapWithConcurrency(items, limit, fn) {
   const results = new Array(items.length);
   let nextIndex = 0;
@@ -184,31 +178,17 @@ async function mapWithConcurrency(items, limit, fn) {
   return results;
 }
 
-// Visits ONE listing's detail page and extracts elevator/balcony/furnished.
-// A failure here (page error, timeout, selector issue) must not crash the
-// whole batch — it just leaves that listing's detail fields as null,
-// which is visible and honest rather than silently wrong.
 async function fetchListingDetails(browser, url, attempt = 1) {
   let page;
   try {
     page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'); // fixes 403 blocks from bot-detection checking for the default 'HeadlessChrome' signature (confirmed root cause via live ParisRental testing)
+    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
     await page.setDefaultNavigationTimeout(20000);
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
 
-    // Combine innerText (visible/rendered text) with textContent (includes
-    // text hidden behind collapsed panels, e.g. a "show more" Amenities
-    // section). innerText alone was confirmed to miss real data: a live
-    // test returned furnished=null for a listing whose Amenities section
-    // literally lists "Furnished" — almost certainly because that section
-    // is collapsed by default and innerText only sees visible content.
     const bodyText = await page.evaluate(() => {
       const visible = document.body.innerText || '';
       const all = document.body.textContent || '';
-      // Insert spaces at lowercase->uppercase boundaries so words that get
-      // concatenated without whitespace when read via textContent (e.g. a
-      // list rendered as "FreezerFurnishedHob") still separate into words
-      // a \b-based regex can match individually.
       const spaced = all.replace(/([a-z])([A-Z])/g, '$1 $2');
       return visible + ' ' + spaced;
     });
@@ -218,24 +198,16 @@ async function fetchListingDetails(browser, url, attempt = 1) {
   } catch (error) {
     if (page) { try { await page.close(); } catch (e) {} }
 
-    // One retry — live testing showed ~20% of detail-page fetches failing
-    // with transient errors ("frame detached", "Connection closed") when
-    // running 100 in a row. A single retry with a fresh page recovers most
-    // of these without much added time, since most failures are transient
-    // rather than that specific page being permanently broken.
     if (attempt === 1) {
       console.log(`[Barnes] Detail fetch failed for ${url} (attempt 1): ${error.message} — retrying once...`);
       return fetchListingDetails(browser, url, 2);
     }
 
     console.log(`[Barnes] Detail fetch failed for ${url} (attempt 2, giving up): ${error.message}`);
-    return { elevator: null, balcony: null, furnished: null };
+    return { elevator: null, balcony: null, furnished: null, bathroomsFromDetail: null, bedroomsFromDetail: null };
   }
 }
 
-// Enriches an already-parsed listing array with detail-page data. This is
-// the slow, opt-in step: visits every listing's own page (up to 100 extra
-// page loads) rather than relying only on the fast results-list summary.
 async function enrichWithDetails(browser, listings) {
   console.log(`[Barnes] Fetching detail pages for ${listings.length} listings (concurrency: ${DETAIL_FETCH_CONCURRENCY})...`);
   const start = Date.now();
@@ -244,8 +216,6 @@ async function enrichWithDetails(browser, listings) {
   const details = await mapWithConcurrency(listings, DETAIL_FETCH_CONCURRENCY, async (listing) => {
     const result = await fetchListingDetails(browser, listing.url);
     completed++;
-    // Progress every 10 listings (or every one, if fewer than 10 total) so
-    // a multi-minute run doesn't look frozen with no output.
     if (completed % 10 === 0 || completed === listings.length) {
       const elapsed = ((Date.now() - start) / 1000).toFixed(0);
       console.log(`[Barnes] Detail progress: ${completed}/${listings.length} (${elapsed}s elapsed)`);
@@ -256,11 +226,30 @@ async function enrichWithDetails(browser, listings) {
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
   console.log(`[Barnes] Detail fetch complete in ${elapsed}s`);
 
-  return listings.map((listing, i) => ({ ...listing, ...details[i] }));
+  // FIXED: was `{ ...listing, ...details[i] }` — unconditionally
+  // overwrote elevator/balcony/furnished with a failed fetch's nulls,
+  // and left bathroomsFromDetail/bedroomsFromDetail stranded as unused
+  // extra keys instead of merging them into bathrooms/bedrooms.
+  return listings.map((listing, i) => {
+    const d = details[i];
+    return {
+      ...listing,
+      elevator: mergeFeature(d.elevator, listing.elevator),
+      balcony: mergeFeature(d.balcony, listing.balcony),
+      furnished: mergeFeature(d.furnished, listing.furnished),
+      bathrooms: listing.bathrooms != null ? listing.bathrooms : d.bathroomsFromDetail,
+      bedrooms: listing.bedrooms != null ? listing.bedrooms : d.bedroomsFromDetail
+    };
+  });
 }
 
 async function scrapeBarnes(searchType, options = {}) {
-  const { fetchDetails = false } = options;
+  // FIXED: defaulted to `true` — was `false`, meaning any caller that
+  // forgot to explicitly opt in silently got zero furnished/elevator/
+  // balcony data with no signal anything was wrong. A summary-card pass
+  // (below) now always provides at least a baseline value regardless of
+  // this flag; fetchDetails additionally enriches via the detail page.
+  const { fetchDetails = true } = options;
   const { key, config } = getBarnesConfig(searchType);
   let browser;
   let page;
@@ -272,7 +261,7 @@ async function scrapeBarnes(searchType, options = {}) {
 
     page = await browser.newPage();
 
-    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'); // fixes 403 blocks from bot-detection checking for the default 'HeadlessChrome' signature (confirmed root cause via live ParisRental testing)
+    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
     await page.setDefaultNavigationTimeout(30000);
     await page.setDefaultTimeout(30000);
 
@@ -289,11 +278,6 @@ async function scrapeBarnes(searchType, options = {}) {
       console.warn(`[${key}] Selector timeout ("${config.waitForSelector}")`);
     }
 
-    // domcontentloaded fires before async/deferred scripts (like whatever
-    // defines annonces_suivantes) necessarily finish executing. Rather than
-    // guessing at a navigation timing strategy that's either too slow
-    // (networkidle2 — caused a real timeout) or too fast (domcontentloaded
-    // alone — function not defined yet), wait for the ACTUAL thing we need.
     try {
       await page.waitForFunction(
         () => typeof window.annonces_suivantes === 'function',
@@ -311,10 +295,20 @@ async function scrapeBarnes(searchType, options = {}) {
 
     const parsed = rawListings.slice(0, maxListings).map(item => {
       const listing = parseListing(item.rawText);
+      // NEW — was completely missing before this fix. Runs on the
+      // summary-card text already fetched above (no extra network cost),
+      // giving every listing a baseline value even if the detail-page
+      // enrichment below is skipped or partially fails.
+      const details = extractDetailFeatures(item.rawText);
       listing.url = item.url;
       listing.source = 'Barnes';
       listing.searchType = config.searchType;
       listing.isExactListing = true;
+      listing.elevator = details.elevator;
+      listing.balcony = details.balcony;
+      listing.furnished = details.furnished;
+      if (listing.bathrooms == null) listing.bathrooms = details.bathroomsFromDetail;
+      if (listing.bedrooms == null) listing.bedrooms = details.bedroomsFromDetail;
       return listing;
     });
 
