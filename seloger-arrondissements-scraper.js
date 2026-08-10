@@ -1,5 +1,24 @@
 // seloger-arrondissements-scraper.js
 //
+// FIX (this pass): this file never called extractDetailFeatures() on the
+// summary-card/search-result text at all — elevator/balcony/furnished
+// only ever came from the detail-page fetch. Real evidence (live
+// SeLoger search results fetched directly) shows this was a mistaken
+// assumption: SeLoger's own search-result card text is frequently
+// PACKED with "meublé" ("appartement meublé", "APPARTEMENT MEUBLE 4
+// PIECES", "LOCATION MEUBLEE", etc.) — the file's original comment
+// claiming furnished only lives in the detail page's "Caractéristiques"
+// checklist was wrong, or at best incomplete. Given this source ALSO
+// fights real anti-bot blocking on its detail-page fetches (see
+// DETAIL_FETCH_CONCURRENCY's own comments on DataDome), relying solely
+// on that fetch with no summary-card fallback means every blocked fetch
+// produces a hard "Not mentioned" even when the answer was sitting right
+// there in text already scraped. Added the same summary-pass +
+// mergeFeature pattern already proven on every other source: the
+// detail-page value still wins when the fetch succeeds (more complete),
+// but a failed fetch now falls back to what the summary card already
+// found instead of erasing it.
+//
 // Covers all 20 Paris arrondissements as separate isolated locations —
 // same architecture as seloger-suburbs-scraper.js (each gets its own
 // browser/session, meant to run as its own GitHub Actions matrix job).
@@ -20,54 +39,23 @@
 // a wrong code fails visibly, not silently as wrong data.
 
 const parseListing = require('./parse-listing');
-const { extractDetailFeatures } = require('./parse-listing');
+const { extractDetailFeatures, mergeFeature } = require('./parse-listing');
 
 const PARIS_ARRONDISSEMENTS = Array.from({ length: 20 }, (_, i) => {
   const n = i + 1;
   const postal = `750${n.toString().padStart(2, '0')}`;
   const geoCode = `ad09fr${25 + n}`;
-  // French ordinal convention: 1er (premier), not "1eme" — every other
-  // arrondissement (2nd-20th) correctly uses "eme" per the 3 confirmed
-  // real examples (7eme, 15eme, 16eme).
   const ordinal = n === 1 ? '1er' : `${n}eme`;
-  // displayName matches the SAME "Paris Nème" format Barnes and SeLoger's
-  // main Paris scraper already use — cross-source consistency, per direct
-  // request, so sorting/grouping by address works the same way regardless
-  // of which agency a listing came from.
   const displayName = n === 1 ? 'Paris 1er' : `Paris ${n}ème`;
   return { arrondissement: n, slug: `paris-${ordinal}-arrondissement-${postal}`, postal, geoCode, displayName };
 });
 
-// Real bug found live: this was hardcoded to /annonces/locations/ (rent
-// only), causing every sale job to silently return 0 listings — the
-// selector never matched anything on a buy page (which uses
-// /annonces/achat/ instead), so waitForSelector always timed out and
-// the loop broke immediately, looking like "genuinely zero results"
-// rather than a wrong selector. Confirmed live: buy listing links use
-// /annonces/achat/appartement/... (e.g. .../ecole-militaire/274282375.htm).
 function getListingSelector(searchType) {
   return searchType === 'sale' ? 'a[href*="/annonces/achat/"]' : 'a[href*="/annonces/locations/"]';
 }
-// Real evidence found live: raising this to 5 was WRONG - detail-page
-// requests started returning tiny ~430-character blocked/challenge
-// pages (vs normal 50,000-90,000 characters) starting around the 9th
-// request in a batch of 463. This is DataDome's anti-bot system
-// detecting the rapid-fire volume and serving degraded content instead
-// of real pages. Lowered to 2 (below the original 3) plus added
-// inter-request spacing and retry-on-block logic below, rather than
-// just reverting the number alone.
 const DETAIL_FETCH_CONCURRENCY = 2;
 
 async function getBrowser() {
-  // Switched to puppeteer-extra + stealth plugin after real evidence of
-  // SeLoger's anti-bot system (DataDome) partially blocking even isolated,
-  // separately-run scraping jobs. This patches common headless-Chrome
-  // automation tells (navigator.webdriver, missing plugins, etc). Being
-  // realistic about this: published 2026 research shows DataDome
-  // specifically has detection methods for this exact plugin, and
-  // increasingly targets network/TLS-level fingerprints a JS-level patch
-  // can't reach at all — this is worth trying (free, addresses a real gap
-  // we hadn't touched), not a guaranteed fix.
   const puppeteer = require('puppeteer-extra');
   const StealthPlugin = require('puppeteer-extra-plugin-stealth');
   puppeteer.use(StealthPlugin());
@@ -103,38 +91,10 @@ function extractListings(searchType) {
     }
   }
 
-  // FIXED — same real Puppeteer serialization bug found across all 3
-  // SeLoger scrapers: page.evaluate(extractListings) only sends THIS
-  // function's own source into the browser, not a separate
-  // extractStatedCount() function it referenced. Inlined here.
-  // Real bug found live (2026-07-22): this only matched "N annonces",
-  // but the real h1 format on /classified-search pages is "N
-  // appartements à louer" / "N maisons et appartements à louer" — never
-  // "annonces" at all — so statedCount was silently always null here.
-  //
-  // SECOND real bug found live right after fixing the first one:
-  // concatenating document.title + h1 text with a single space produced
-  // garbage like "750161041" — the postal code at the end of the title
-  // ("...75016") sat directly next to the h1's leading count ("968
-  // appartements...") with only one space between them, and the old
-  // [\d\s]* group greedily fused BOTH numbers into one, since it allows
-  // spaces inside the digit run (same class of bug the price regex in
-  // parse-listing.js already had to guard against, just missed here).
-  // Fixed by reading the h1 alone (never concatenated with anything
-  // else) and anchoring to its start, since the count is always the
-  // very first thing in it — nothing for an adjacent number to fuse with.
   const h1Text = document.querySelector('h1') ? document.querySelector('h1').innerText : '';
   const countMatch = h1Text.match(/^\s*(\d[\d\s]*?)\s*(?:annonces|appartements|maisons)/i);
   const statedCount = countMatch ? parseInt(countMatch[1].replace(/\s/g, ''), 10) : null;
 
-  // Same contamination-cap fix as seloger-suburbs-scraper.js — caps to
-  // the page's own stated count if we somehow picked up more (e.g. a
-  // "nearby suggestions" filler section).
-  //
-  // Now returns statedCount alongside the results (was previously
-  // returned-then-discarded by the caller) — added so scrapeArrondissement
-  // can log SeLoger's own official total next to what we actually scraped,
-  // for real visibility into any gap rather than guessing at the cause.
   if (statedCount !== null && statedCount < results.length) {
     return { results: results.slice(0, statedCount), statedCount };
   }
@@ -158,13 +118,10 @@ async function mapWithConcurrency(items, limit, fn) {
 async function fetchListingDetails(browser, url, isRetry = false) {
   let page;
   try {
-    // Small randomized delay before each request - spaces out requests
-    // to look less like an automated batch, reducing the chance of
-    // triggering DataDome's rate-based blocking.
     await new Promise(r => setTimeout(r, 400 + Math.random() * 400));
 
     page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'); // fixes 403 blocks from bot-detection checking for the default 'HeadlessChrome' signature (confirmed root cause via live ParisRental testing)
+    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
     await page.setDefaultNavigationTimeout(20000);
     const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
 
@@ -177,15 +134,6 @@ async function fetchListingDetails(browser, url, isRetry = false) {
 
     await page.close();
 
-    // Real bug found live: checking only bodyText.length missed a whole
-    // class of failures. A genuine 403 block returns instantly with
-    // empty content, and extractDetailFeatures('') on empty text
-    // returns elevator:false/balcony:false (their real defaults) rather
-    // than null - so the old "all fields null = blocked" check never
-    // caught this, silently counting real blocks as "successful, just
-    // nothing to report". Checking the actual HTTP status directly
-    // catches this properly regardless of what the resulting text looks
-    // like.
     const status = response ? response.status() : null;
     const isBlocked = status === 403 || status === 429 || bodyText.length < 2000;
     if (isBlocked && !isRetry) {
@@ -194,7 +142,7 @@ async function fetchListingDetails(browser, url, isRetry = false) {
     }
 
     const result = extractDetailFeatures(bodyText);
-    result._wasBlocked = isBlocked; // still blocked even after the retry, or this IS the retry and it's still blocked
+    result._wasBlocked = isBlocked;
     return result;
   } catch (error) {
     if (page) { try { await page.close(); } catch (e) {} }
@@ -219,50 +167,36 @@ async function enrichWithDetails(listings, label) {
         bedroomsFromDetail = null;
       }
       const bedrooms = listing.bedrooms != null ? listing.bedrooms : bedroomsFromDetail;
-      return { ...listing, elevator: d.elevator, balcony: d.balcony, furnished: d.furnished, bathrooms, bedrooms };
+      // FIXED: was `elevator: d.elevator, balcony: d.balcony, furnished:
+      // d.furnished` unconditionally — overwrote whatever the NEW
+      // summary-card pass (in scrapeArrondissement, below) had already
+      // found with a failed fetch's null. mergeFeature keeps the
+      // detail-page value when the fetch actually succeeded (still
+      // preferred — more complete), falls back to the summary-card
+      // value otherwise.
+      return {
+        ...listing,
+        elevator: mergeFeature(d.elevator, listing.elevator),
+        balcony: mergeFeature(d.balcony, listing.balcony),
+        furnished: mergeFeature(d.furnished, listing.furnished),
+        bathrooms,
+        bedrooms
+      };
     });
   } finally {
     await freshBrowser.close();
   }
 }
 
-// Scrapes ONE arrondissement in complete isolation (own browser, meant to
-// run as its own GitHub Actions job) — same pattern proven for suburbs.
-//
-// shardIndex/shardCount: real evidence found live (2026-07-21) that
-// removing the page/result cap wasn't enough on its own — the busiest
-// arrondissements (15th: 2075 sale listings) need up to ~95 minutes just
-// for detail-page enrichment at the safe anti-bot concurrency, blowing
-// past even a generously bumped job timeout. Every shard runs its OWN
-// full pagination pass (cheap, ~1-3 min) but only enriches the fraction
-// of listings where `index % shardCount === shardIndex` — splitting the
-// expensive part (enrichment) across parallel isolated jobs instead of
-// racing one job against an ever-bigger clock. Defaults (0, 1) preserve
-// old single-job behavior for any caller that doesn't pass these.
 async function scrapeArrondissement(arr, searchType, shardIndex = 0, shardCount = 1) {
   let browser;
   let page;
   try {
     browser = await getBrowser();
     page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'); // fixes 403 blocks from bot-detection checking for the default 'HeadlessChrome' signature (confirmed root cause via live ParisRental testing)
+    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
     await page.setDefaultNavigationTimeout(20000);
 
-    // Real pagination confirmed via live testing (found by clicking the
-    // actual page-2 button in the UI and observing the URL it produces —
-    // every URL-parameter-guessing attempt before this failed silently).
-    // The real endpoint is /classified-search with a 'page' parameter
-    // and the geoCode UPPERCASED — verified across 5 pages returning 144
-    // genuinely unique listings (28-30 new per page), not the same
-    // content repeated.
-    //
-    // No hardcoded page/result cap — real evidence found live: the 15th,
-    // 16th, and 17th arrondissements alone have 784/706/566 listings,
-    // well past the 450 this used to cap at, silently dropping ~700 real
-    // listings across just those three. Loop now runs until a page
-    // yields zero new listings (genuinely out of pages) — see the job
-    // timeout bump in scrape-deploy.yml, which now gives enough headroom
-    // for the busiest arrondissements to finish enrichment too.
     const allParsed = [];
     const seenUrls = new Set();
     let statedCountSeen = null;
@@ -272,15 +206,6 @@ async function scrapeArrondissement(arr, searchType, shardIndex = 0, shardCount 
       const distributionType = searchType === 'sale' ? 'Buy' : 'Rent';
       const url = `https://www.seloger.com/classified-search?distributionTypes=${distributionType}&estateTypes=Apartment&locations=${arr.geoCode.toUpperCase()}&page=${pageNum}`;
 
-      // Real evidence found live (2026-07-22): a single failed page load
-      // used to immediately end pagination here, silently. Production
-      // measured one arrondissement at 647 listings when SeLoger's own
-      // site showed ~968 for the same search — a clean isolated retest
-      // (no other confound) still hit a full page-load failure on its
-      // first attempt and would have given up with ZERO listings under
-      // the old logic. Retrying a few times before giving up
-      // distinguishes a transient hiccup from a genuine end — only
-      // treated as the real end after every attempt fails the same way.
       const MAX_PAGE_ATTEMPTS = 3;
       let pageLoadSucceeded = false;
       let lastStatus = null;
@@ -301,10 +226,6 @@ async function scrapeArrondissement(arr, searchType, shardIndex = 0, shardCount 
       }
 
       if (!pageLoadSucceeded) {
-        // No listings on this page after every retry — either genuinely
-        // out of pages, a wrong geo-code (page 1), or a persistent block.
-        // Flag the block case explicitly rather than silently treating
-        // it the same as a genuine end.
         if (lastStatus === 403 || lastStatus === 429) {
           console.warn(`[SeLoger-${arr.slug}] Page ${pageNum}: got HTTP ${lastStatus} (blocked) even after ${MAX_PAGE_ATTEMPTS} attempts — stopping here. This page's listings are likely missing from the count below.`);
         } else {
@@ -315,10 +236,6 @@ async function scrapeArrondissement(arr, searchType, shardIndex = 0, shardCount 
 
       const { results: raw, statedCount } = await page.evaluate(extractListings, searchType);
       if (statedCount != null) statedCountSeen = statedCount;
-      // A page returning far fewer links than a normal full page (usually
-      // ~25-30) without being the genuine last page is another sign of a
-      // partial/blocked load rather than real content — logged so a
-      // pattern of these lines up with any observed undercount.
       lastPageWasSuspiciouslyShort = raw.length > 0 && raw.length < 10;
 
       let newCount = 0;
@@ -330,30 +247,28 @@ async function scrapeArrondissement(arr, searchType, shardIndex = 0, shardCount 
         listing.source = 'SeLoger';
         listing.searchType = searchType;
         listing.isExactListing = true;
-        // Override with the known arrondissement — we already know
-        // exactly which one this is, more reliable than re-deriving
-        // from noisy text.
         listing.address = arr.displayName;
+        // NEW — same fix as every other source: check the search-result
+        // card text directly, since real evidence shows it frequently
+        // already states furnished status ("appartement meublé", etc.)
+        // No extra network cost — this is text already fetched above.
+        const details = extractDetailFeatures(item.rawText);
+        listing.elevator = details.elevator;
+        listing.balcony = details.balcony;
+        listing.furnished = details.furnished;
+        if (listing.bathrooms == null) listing.bathrooms = details.bathroomsFromDetail;
+        if (listing.bedrooms == null) listing.bedrooms = details.bedroomsFromDetail;
         allParsed.push(listing);
         newCount++;
       }
 
       console.log(`[SeLoger-${arr.slug}] Page ${pageNum}: ${newCount} new listing(s), ${allParsed.length} total so far`);
 
-      if (newCount === 0) break; // genuinely reached the end
+      if (newCount === 0) break;
     }
 
     const valid = allParsed.filter(l => l.price > 0 || l.priceOnRequest || l.address);
-    // NOTE: address is unconditionally overridden to arr.displayName above,
-    // so this filter never actually rejects anything here — valid.length
-    // will always equal allParsed.length. Kept for consistency with the
-    // other scrapers, not because it's doing real filtering in this file.
 
-    // Room-share/colocation listings get excluded later, once, across all
-    // sources (see merge-and-generate.js's `!l.isRoomShare` filter) — not
-    // here. Counted and logged now so the gap between "what we scraped"
-    // and "what SeLoger's own count says" isn't a mystery: a chunk of it
-    // is this deliberate exclusion, not a scraping bug.
     const roomShareCount = valid.filter(l => l.isRoomShare).length;
     const willAppearInFinalOutput = valid.length - roomShareCount;
     if (statedCountSeen != null) {
@@ -363,18 +278,11 @@ async function scrapeArrondissement(arr, searchType, shardIndex = 0, shardCount 
       console.log(`[SeLoger-${arr.slug}] Could not read SeLoger's stated total (title/h1 didn't match). Scraped ${allParsed.length} raw, ${roomShareCount} room-share (excluded downstream), ${willAppearInFinalOutput} will appear in final output.`);
     }
 
-    // Shard AFTER full pagination completes — every shard sees the same
-    // complete listing set and independently picks its own slice, so no
-    // shard needs to know what any other found. Index-modulo keeps each
-    // shard's slice roughly even regardless of shardCount.
     const shard = shardCount > 1 ? valid.filter((_, i) => i % shardCount === shardIndex) : valid;
     if (shardCount > 1) {
       console.log(`[SeLoger-${arr.slug}] Shard ${shardIndex}/${shardCount}: enriching ${shard.length}/${valid.length} listings`);
     }
 
-    // Close the pagination browser/page before enrichment, which now
-    // launches a genuinely fresh browser of its own (see the
-    // EXPERIMENTAL note in enrichWithDetails above).
     await page.close();
     await browser.close();
     browser = null;
