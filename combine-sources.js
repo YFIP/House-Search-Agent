@@ -9,6 +9,13 @@
 // SeLoger eventually getting blocked, Barnes' site changing) can't take
 // down the others — the run still produces results for whatever worked,
 // with per-source status visible in the output rather than a silent gap.
+//
+// FIX (this pass): added `excludeJunot`, mirroring excludeDanielFeau/
+// excludeEiffelHousing. Junot now does real detail-page enrichment (to
+// recover furnished status — see junot-scraper.js), which means it needs
+// the same isolated-job treatment as those two sources rather than
+// running inside scrape-main's shared 15-minute budget. See
+// scrape-single-junot.js and the corresponding scrape-deploy.yml job.
 
 const { scrapeBarnes } = require('./scrape-runner');
 const { scrapeSeLoger } = require('./seloger-scraper');
@@ -21,11 +28,6 @@ const { scrapeParisRental } = require('./parisrental-scraper');
 const { scrapeDanielFeau } = require('./danielfeau-scraper');
 const { scrapeEiffelHousing } = require('./eiffel-housing-scraper');
 
-// Blanket timeout wrapper — catches a hang ANYWHERE inside a scraper
-// function, not just at browser launch. Real successful runs (both local
-// and the one confirmed working GitHub Actions run) completed well under
-// 30 seconds per source on the fast path; 3 minutes is generous headroom
-// while still failing fast enough that a hang costs minutes, not hours.
 function withTimeout(promise, ms, label) {
   let timer;
   const timeoutPromise = new Promise((_, reject) => {
@@ -34,19 +36,8 @@ function withTimeout(promise, ms, label) {
   return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer));
 }
 
-// Increased from 3 minutes after real evidence: a legitimate Barnes run
-// completed in 176.5s (confirmed via logs) but was falsely reported as
-// failed because it raced past the old 180000ms ceiling by mere seconds.
-// Promise.race-based timeouts don't cancel the underlying operation, so a
-// too-tight margin causes exactly this: real success arriving just after
-// we'd already given up on it. 5 minutes gives real headroom above the
-// observed worst case.
 const PER_SOURCE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
-// Shared runner for every source: wraps in a timeout, catches any thrown
-// error, and always contributes a sourceStatus entry — so one source
-// failing (timeout, thrown error, or a clean {error: ...} return) never
-// stops the others from running or from being reflected in the output.
 async function runSource(label, promiseFactory, results, sourceStatus) {
   try {
     console.log(`\n=== Scraping ${label} ===`);
@@ -64,39 +55,31 @@ async function runSource(label, promiseFactory, results, sourceStatus) {
 }
 
 async function combineAllSources(searchType = 'rent', options = {}) {
-  const { fetchDetails = false, excludeSeLoger = false, excludeSeLogerSuburbs = false, excludeParisRental = false, excludeDanielFeau = false, excludeEiffelHousing = false, externalListings = [], externalSourceStatus = [] } = options;
+  const {
+    fetchDetails = false,
+    excludeSeLoger = false,
+    excludeSeLogerSuburbs = false,
+    excludeParisRental = false,
+    excludeDanielFeau = false,
+    excludeEiffelHousing = false,
+    excludeJunot = false, // NEW
+    externalListings = [],
+    externalSourceStatus = []
+  } = options;
   const results = [...externalListings];
   const sourceStatus = [...externalSourceStatus];
 
   await runSource('Barnes', () => scrapeBarnes(searchType, { fetchDetails }), results, sourceStatus);
   await runSource('Barnes-Suburbs', () => scrapeBarnesSuburbs(searchType), results, sourceStatus);
-  await runSource('Junot', () => scrapeJunot(searchType), results, sourceStatus);
 
-  // SeLoger, SeLoger-Suburbs: rent AND sale both verified live (real
-  // pagination confirmed for both via the distributionTypes=Buy/Rent
-  // parameter) — the old rent-only gate here is removed.
-  //
-  // excludeSeLoger: ADDED after a real regression — SeLoger's own page/
-  // result cap was removed (it now runs until genuinely out of pages, by
-  // design — no time or count limit on how many listings it pulls), which
-  // means a full run routinely exceeds this file's PER_SOURCE_TIMEOUT_MS
-  // (5 min): the shared timeout would silently discard ALL of SeLoger's
-  // progress and report 0 listings, not a partial result, every time it
-  // runs inside scrape-main's shared budget. Same class of problem
-  // DanielFeau and Eiffel Housing hit before being moved to their own
-  // isolated jobs (see below) — SeLoger-main gets the same treatment via
-  // scrape-single-seloger.js, with its own generous per-job timeout and no
-  // 5-minute ceiling at all.
-  //
-  // excludeSeLogerSuburbs: RESTORED after a real regression — this option
-  // existed in an earlier version (built for the matrix-job architecture,
-  // where SeLoger-Suburbs runs as separate isolated GitHub Actions jobs
-  // instead of within this combined process) but was accidentally lost
-  // when Book-a-Flat/Perenium got wired in from an older file copy that
-  // predated this option. scrape-main-sources.js has been correctly
-  // passing excludeSeLogerSuburbs: true this whole time — it just had
-  // nothing to act on it, so SeLoger-Suburbs kept running unconditionally
-  // inside scrape-main using the old single-process code.
+  // Junot: moved to its own isolated job (like DanielFeau/Eiffel Housing)
+  // after adding real detail-page enrichment for furnished status —
+  // enriching up to 849 real sale listings at a cautious rate needs more
+  // time than scrape-main's shared budget can comfortably afford.
+  if (!excludeJunot) {
+    await runSource('Junot', () => scrapeJunot(searchType), results, sourceStatus);
+  }
+
   if (!excludeSeLoger) {
     await runSource('SeLoger', () => scrapeSeLoger(searchType), results, sourceStatus);
   }
@@ -104,25 +87,14 @@ async function combineAllSources(searchType = 'rent', options = {}) {
     await runSource('SeLoger-Suburbs', () => scrapeSeLogerSuburbs(searchType), results, sourceStatus);
   }
 
-  // Book-a-Flat, Perenium, ParisRental, DanielFeau, Eiffel Housing: rent
-  // AND sale both verified live for every one of these — the old
-  // rent-only gate is removed.
   await runSource('Book-a-Flat', () => scrapeBookAFlat(searchType), results, sourceStatus);
   await runSource('Perenium', () => scrapePerenium(searchType), results, sourceStatus);
   if (!excludeParisRental) {
     await runSource('ParisRental', () => scrapeParisRental(searchType), results, sourceStatus);
   }
-  // DanielFeau: moved to its own isolated job (like SeLoger-Suburbs)
-  // after adding real detail-page enrichment - up to 600 listings with a
-  // cautious, anti-bot-safe fetch rate needs more time than scrape-main's
-  // shared budget can comfortably afford.
   if (!excludeDanielFeau) {
     await runSource('DanielFeau', () => scrapeDanielFeau(searchType), results, sourceStatus);
   }
-  // Eiffel Housing: moved to its own isolated job (like DanielFeau) after
-  // adding real detail-page enrichment - confirmed live that scrape-main
-  // got cancelled at its 15-minute timeout mid-way through Eiffel
-  // Housing's enrichment step, which didn't exist before this session.
   if (!excludeEiffelHousing) {
     await runSource('Eiffel Housing', () => scrapeEiffelHousing(searchType), results, sourceStatus);
   }
