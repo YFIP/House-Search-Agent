@@ -1,5 +1,13 @@
 // parisrental-scraper.js
 //
+// FIX (this pass): `listing.furnished = category.name === 'furnished'`
+// ran unconditionally, including for the 'sale' category — meaning every
+// ParisRental SALE listing got `furnished: false` (a confident "No"),
+// when the honest answer is "not applicable / not stated" (furnishing
+// status isn't a real category distinction for a sale listing the way it
+// is for a rental). Changed to a 3-way ternary so sale listings get
+// `null` ("Not mentioned") instead of a false "No".
+//
 // VERIFIED LIVE:
 //   - Furnished: https://en.parisrental.com/furnished-apartments/ — "92
 //     results match your search". Individual listings live under
@@ -42,9 +50,6 @@ const RENT_CATEGORIES = [
   }
 ];
 
-// Sale inventory confirmed live at just 4 listings — genuinely tiny, no
-// pagination needed in practice, but MAX_PAGES stays shared/generous in
-// case that changes.
 const SALE_CATEGORIES = [
   {
     name: 'sale',
@@ -53,11 +58,20 @@ const SALE_CATEGORIES = [
   }
 ];
 
-// Kept for backward compatibility with any external reference to the
-// original name.
 const CATEGORIES = RENT_CATEGORIES;
 
-const MAX_PAGES = 8; // safety margin above the ~6-7 pages actually observed for furnished
+const MAX_PAGES = 8;
+
+// Shared helper: furnished status is inferred directly from which
+// category we scraped — 100% reliable, no text-parsing needed, for the
+// two RENT categories. The 'sale' category isn't a furnishing
+// distinction at all, so it must resolve to null ("not stated"), not a
+// false "unfurnished".
+function furnishedFromCategory(categoryName) {
+  if (categoryName === 'furnished') return true;
+  if (categoryName === 'unfurnished') return false;
+  return null; // 'sale' — furnishing status isn't a real category here
+}
 
 async function getBrowser() {
   const puppeteer = require('puppeteer');
@@ -68,10 +82,6 @@ async function getBrowser() {
   });
 }
 
-// linkPrefix passed as an argument (not captured from outer scope) — a
-// real Puppeteer serialization lesson learned earlier this project:
-// page.evaluate(fn) only sends fn's own source, not any outer-scope
-// variables it references, unless passed explicitly as an argument.
 function extractListings(linkPrefix) {
   const results = [];
   const seen = new Set();
@@ -105,7 +115,7 @@ function extractListings(linkPrefix) {
 async function scrapeCategory(browser, category, searchType, seenUrls, allListings) {
   for (let pageNum = 1; pageNum <= MAX_PAGES; pageNum++) {
     const page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'); // fixes 403 blocks from bot-detection checking for the default 'HeadlessChrome' signature (confirmed root cause via live ParisRental testing)
+    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
     await page.setDefaultNavigationTimeout(20000);
     const url = pageNum === 1 ? category.baseUrl : `${category.baseUrl}?page=${pageNum}`;
 
@@ -132,10 +142,10 @@ async function scrapeCategory(browser, category, searchType, seenUrls, allListin
       listing.source = 'ParisRental';
       listing.searchType = searchType;
       listing.isExactListing = true;
-      // Furnished status inferred directly from which category we
-      // scraped — 100% reliable, no text-parsing needed, since the site
-      // itself splits listings into these two categories.
-      listing.furnished = category.name === 'furnished';
+      // FIXED: was `category.name === 'furnished'` unconditionally,
+      // which meant sale listings got `false` (a confident "No") instead
+      // of `null` ("not stated") — see file header note.
+      listing.furnished = furnishedFromCategory(category.name);
       allListings.push(listing);
       newCount++;
     }
@@ -177,17 +187,6 @@ async function scrapeParisRental(searchType = 'rent') {
   }
 }
 
-// Scrapes exactly ONE page of ONE category, in complete isolation (own
-// browser launch) — meant to run as its own separate GitHub Actions job.
-// Built after the combined scraper kept returning 0 results specifically
-// on GitHub Actions (while working fine from a home network with the
-// identical code) — strong evidence GitHub's IP range itself is being
-// blocked, not a code bug. Isolating each page the same way that fixed
-// SeLoger's suburbs/arrondissements is worth trying, though it's not
-// guaranteed to help here: SeLoger's issue looked like session-pattern
-// detection (fixed by isolation), while this one looks more like a
-// straightforward IP block (which isolation may not fix at all, since
-// every isolated job still originates from the same GitHub IP range).
 async function scrapeSinglePage(categoryName, pageNum, searchType = 'rent') {
   const category = [...RENT_CATEGORIES, ...SALE_CATEGORIES].find(c => c.name === categoryName);
   if (!category) {
@@ -219,7 +218,8 @@ async function scrapeSinglePage(categoryName, pageNum, searchType = 'rent') {
       listing.source = 'ParisRental';
       listing.searchType = searchType;
       listing.isExactListing = true;
-      listing.furnished = category.name === 'furnished';
+      // FIXED: same sale-category fix as scrapeCategory above.
+      listing.furnished = furnishedFromCategory(category.name);
       return listing;
     });
 
