@@ -1,5 +1,12 @@
 // bookaflat-scraper.js
 //
+// FIX (this pass): enrichWithDetails() used to unconditionally overwrite
+// elevator/balcony/furnished with the detail-page fetch result — even on
+// a failed fetch (nulls) — silently wiping out values the summary-card
+// pass below had already found. Now uses the shared mergeFeature()
+// helper so a failed detail fetch just leaves the summary-card value in
+// place instead of erasing it.
+//
 // VERIFIED LIVE:
 //   - https://www.book-a-flat.com/en/search.html (page 1, ~30 listings)
 //   - https://www.book-a-flat.com/en/search-2.html (page 2, ~7 listings,
@@ -31,7 +38,7 @@
 //     DOM differs from what a markdown-converted fetch implied).
 
 const parseListing = require('./parse-listing');
-const { extractDetailFeatures } = require('./parse-listing');
+const { extractDetailFeatures, mergeFeature } = require('./parse-listing');
 
 const BASE_URL = 'https://www.book-a-flat.com/en/search';
 const LISTING_SELECTOR = 'a[href*="/apartment-paris-"]';
@@ -60,9 +67,6 @@ async function mapWithConcurrency(items, limit, fn) {
   return results;
 }
 
-// Same cautious approach proven for SeLoger - low concurrency, small
-// delays, detecting+retrying suspiciously short responses. Low cost
-// here given Book-a-Flat's tiny (~30-36) listing count.
 const DETAIL_FETCH_CONCURRENCY = 2;
 
 async function fetchListingDetails(browser, url, isRetry = false) {
@@ -97,9 +101,13 @@ async function enrichWithDetails(browser, listings) {
     const d = details[i];
     return {
       ...listing,
-      elevator: d.elevator,
-      balcony: d.balcony,
-      furnished: d.furnished,
+      // FIXED: was `d.elevator`/`d.balcony`/`d.furnished` directly,
+      // which overwrote a good summary-card value with null on any
+      // failed detail-page fetch. mergeFeature keeps the detail-page
+      // value when it's actually present, falls back otherwise.
+      elevator: mergeFeature(d.elevator, listing.elevator),
+      balcony: mergeFeature(d.balcony, listing.balcony),
+      furnished: mergeFeature(d.furnished, listing.furnished),
       bathrooms: listing.bathrooms != null ? listing.bathrooms : d.bathroomsFromDetail,
       bedrooms: listing.bedrooms != null ? listing.bedrooms : d.bedroomsFromDetail
     };
@@ -116,9 +124,6 @@ function extractListings() {
     if (seen.has(href)) continue;
     seen.add(href);
 
-    // Try the link's own text first (whole-card-is-a-link pattern
-    // observed) — only walk up to a parent container if that doesn't
-    // contain a price, as a defensive fallback.
     let text = link.innerText || '';
     if (!text.includes('€')) {
       let container = link;
@@ -149,9 +154,6 @@ async function scrapeBookAFlat(searchType = 'rent') {
     for (let pageNum = 1; pageNum <= MAX_PAGES; pageNum++) {
       page = await browser.newPage();
       await page.setDefaultNavigationTimeout(20000);
-      // Sale is a single fixed URL confirmed live (15 apartments, no
-      // pagination) — a completely different URL pattern from rent's
-      // search.html/search-N.html sequence, not just a parameter swap.
       if (searchType === 'sale' && pageNum > 1) break;
       const url = searchType === 'sale'
         ? 'https://www.book-a-flat.com/en/property-for-sale.html'
@@ -174,10 +176,6 @@ async function scrapeBookAFlat(searchType = 'rent') {
       let newCount = 0;
       for (const item of raw) {
         if (seenUrls.has(item.url)) continue;
-        // Sale listings sometimes show a "sold" or "under preliminary
-        // sales agreement" status mixed into the same page as genuinely
-        // available ones — these aren't real inventory, so skip them
-        // rather than presenting them as available.
         if (searchType === 'sale' && /\b(sold|under preliminary sales agreement)\b/i.test(item.rawText)) continue;
         seenUrls.add(item.url);
         const listing = parseListing(item.rawText);
@@ -185,23 +183,21 @@ async function scrapeBookAFlat(searchType = 'rent') {
         listing.source = 'Book-a-Flat';
         listing.searchType = searchType;
         listing.isExactListing = true;
-      // Applying the same detail-feature extraction directly on the raw
-      // summary text (same pattern proven for Junot/Eiffel Housing) -
-      // returns null honestly for fields not present in the text, picks
-      // up real data for fields that are.
-      const details = extractDetailFeatures(item.rawText);
-      if (listing.elevator == null) listing.elevator = details.elevator;
-      if (listing.balcony == null) listing.balcony = details.balcony;
-      if (listing.furnished == null) listing.furnished = details.furnished;
-      if (listing.bathrooms == null) listing.bathrooms = details.bathroomsFromDetail;
-      if (listing.bedrooms == null) listing.bedrooms = details.bedroomsFromDetail;
+        // Same pattern proven for Junot/Eiffel Housing - returns null
+        // honestly for fields not present in the text, picks up real
+        // data for fields that are. enrichWithDetails() below only
+        // overrides this when the detail-page fetch actually succeeds.
+        const details = extractDetailFeatures(item.rawText);
+        if (listing.elevator == null) listing.elevator = details.elevator;
+        if (listing.balcony == null) listing.balcony = details.balcony;
+        if (listing.furnished == null) listing.furnished = details.furnished;
+        if (listing.bathrooms == null) listing.bathrooms = details.bathroomsFromDetail;
+        if (listing.bedrooms == null) listing.bedrooms = details.bedroomsFromDetail;
         allListings.push(listing);
         newCount++;
       }
       await page.close();
 
-      // Stop once a page contributes nothing new — either genuinely out
-      // of pages, or (defensively) a page is somehow repeating content.
       if (newCount === 0) {
         console.log(`[Book-a-Flat] Page ${pageNum} had no new listings — stopping.`);
         break;
