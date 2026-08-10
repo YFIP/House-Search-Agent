@@ -1,23 +1,20 @@
 // merge-and-generate.js
-// Downloads/reads output-main.json (Barnes, Barnes-Suburbs, Junot, SeLoger
-// Paris) plus every output-seloger-{slug}.json (one per suburb, each
-// scraped in its own isolated GitHub Actions job), merges everything, and
-// writes the final Excel file — same output shape as before, just
-// assembled from multiple separate scrape runs instead of one process.
+// Downloads/reads output-main.json (Barnes, Barnes-Suburbs, Book-a-Flat,
+// Perenium) plus every output-seloger-{slug}.json (one per suburb, each
+// scraped in its own isolated GitHub Actions job), the isolated
+// DanielFeau/Eiffel Housing/Junot artifacts, and every ParisRental page
+// result — merges everything, and writes the final Excel file.
+//
+// FIX (this pass): added handling for output-junot.json /
+// output-junot-sale.json, mirroring the existing DanielFeau/Eiffel
+// Housing blocks below, since Junot now runs as its own isolated job
+// (see scrape-single-junot.js) instead of inside output-main.json.
 
 const fs = require('fs');
 const path = require('path');
 const ExcelJS = require('exceljs');
 
 function findSeLogerSuburbFiles(dir, searchType) {
-  // Specifically excludes "-arr-" files so this doesn't also match the
-  // arrondissement result files below (both start with "output-seloger-").
-  // Filenames now include a "-shard-N" segment (see scrape-single-seloger-
-  // suburb.js) since busy towns are split across multiple parallel
-  // enrichment jobs — every shard for a town produces its own file here,
-  // and the merge loop below just treats them as separate result sets
-  // (each contributes its own sourceStatus line, listings dedupe by URL
-  // like everything else).
   const pattern = searchType === 'sale'
     ? /^output-seloger-(?!arr-).+-shard-\d+-sale\.json$/
     : /^output-seloger-(?!arr-).+-shard-\d+\.json$/;
@@ -25,7 +22,6 @@ function findSeLogerSuburbFiles(dir, searchType) {
 }
 
 function findSeLogerArrondissementFiles(dir, searchType) {
-  // Same shard-suffix change as findSeLogerSuburbFiles above.
   const pattern = searchType === 'sale'
     ? /^output-seloger-arr-\d+-shard-\d+-sale\.json$/
     : /^output-seloger-arr-\d+-shard-\d+\.json$/;
@@ -33,9 +29,6 @@ function findSeLogerArrondissementFiles(dir, searchType) {
 }
 
 function findParisRentalFiles(dir, searchType) {
-  // 'sale' category file is output-parisrental-sale-1.json — distinct
-  // from the rent categories (furnished/unfurnished) by name alone, no
-  // extra suffix needed.
   const pattern = searchType === 'sale'
     ? /^output-parisrental-sale-.+\.json$/
     : /^output-parisrental-(furnished|unfurnished)-.+\.json$/;
@@ -93,12 +86,6 @@ async function buildExcel(searchType, listings, sourceStatus, generatedAtIso) {
       url: l.url
     };
     if (hasDetails) {
-      // 'Not mentioned' rather than a blank cell for null — an empty
-      // cell reads as "we forgot to check", not "the listing never said
-      // either way" (or, for elevator/balcony, "the detail-page fetch
-      // failed entirely" — all three go null together on a failed
-      // fetch). Per explicit request: people scanning the sheet need to
-      // be able to tell "not stated" apart from a real "No".
       row.elevator = l.elevator === true ? 'Yes' : l.elevator === false ? 'No' : 'Not mentioned';
       row.balcony = l.balcony === true ? 'Yes' : l.balcony === false ? 'No' : 'Not mentioned';
       row.furnished = l.furnished === true ? 'Yes' : l.furnished === false ? 'No' : 'Not mentioned';
@@ -162,28 +149,27 @@ async function main() {
   console.log(`Found ${arrFiles.length} SeLoger arrondissement result file(s): ${arrFiles.join(', ') || '(none)'}`);
   console.log(`Found ${parisRentalFiles.length} ParisRental category result file(s): ${parisRentalFiles.join(', ') || '(none)'}`);
 
-  // DanielFeau moved to its own isolated job (see scrape-single-danielfeau.js)
-  // after adding real detail-page enrichment - optional here since the job
-  // could theoretically fail without blocking the rest of the merge.
   const danielFeauFilename = searchType === 'sale' ? 'output-danielfeau-sale.json' : 'output-danielfeau.json';
   const danielFeauPath = path.join(artifactsDir, danielFeauFilename);
   const danielFeauResult = fs.existsSync(danielFeauPath) ? loadJson(danielFeauPath) : null;
   console.log(`DanielFeau result file: ${fs.existsSync(danielFeauPath) ? danielFeauFilename : '(not found)'}`);
 
-  // Eiffel Housing moved to its own isolated job (see
-  // scrape-single-eiffel-housing.js) after adding real detail-page
-  // enrichment - confirmed live that scrape-main was timing out mid-way
-  // through its enrichment step.
   const eiffelHousingFilename = searchType === 'sale' ? 'output-eiffel-housing-sale.json' : 'output-eiffel-housing.json';
   const eiffelHousingPath = path.join(artifactsDir, eiffelHousingFilename);
   const eiffelHousingResult = fs.existsSync(eiffelHousingPath) ? loadJson(eiffelHousingPath) : null;
   console.log(`Eiffel Housing result file: ${fs.existsSync(eiffelHousingPath) ? eiffelHousingFilename : '(not found)'}`);
 
+  // NEW — Junot moved to its own isolated job (see scrape-single-junot.js)
+  // after adding real detail-page enrichment for furnished status.
+  // Optional here (like DanielFeau/Eiffel Housing above) since that job
+  // could theoretically fail without blocking the rest of the merge.
+  const junotFilename = searchType === 'sale' ? 'output-junot-sale.json' : 'output-junot.json';
+  const junotPath = path.join(artifactsDir, junotFilename);
+  const junotResult = fs.existsSync(junotPath) ? loadJson(junotPath) : null;
+  console.log(`Junot result file: ${fs.existsSync(junotPath) ? junotFilename : '(not found)'}`);
+
   const allListings = [...mainData.listings];
   const allSourceStatus = [...mainData.sourceStatus];
-  // Dedup by URL: the all-Paris search and per-arrondissement searches can
-  // both surface the SAME listing — without this, that listing would be
-  // double-counted in the final total.
   const seenUrls = new Set(allListings.map(l => l.url));
 
   for (const file of suburbFiles) {
@@ -270,6 +256,24 @@ async function main() {
     allSourceStatus.push({ source: 'Eiffel Housing', found: 0, error: 'Isolated job artifact not found' });
   }
 
+  // NEW — same pattern as DanielFeau/Eiffel Housing above.
+  if (junotResult) {
+    if (junotResult.error) {
+      allSourceStatus.push({ source: 'Junot', found: 0, error: junotResult.error });
+    } else {
+      let added = 0;
+      for (const listing of junotResult.listings) {
+        if (seenUrls.has(listing.url)) continue;
+        seenUrls.add(listing.url);
+        allListings.push(listing);
+        added++;
+      }
+      allSourceStatus.push({ source: 'Junot', found: added, error: null });
+    }
+  } else {
+    allSourceStatus.push({ source: 'Junot', found: 0, error: 'Isolated job artifact not found' });
+  }
+
   const beforeRoomShareFilter = allListings.length;
   const filteredListings = allListings.filter(l => !l.isRoomShare);
   const roomShareCount = beforeRoomShareFilter - filteredListings.length;
@@ -280,12 +284,6 @@ async function main() {
   const filename = await buildExcel(searchType, filteredListings, allSourceStatus, new Date().toISOString());
   console.log(`\n✅ Wrote ${filteredListings.length} combined listings to ${filename}`);
 
-  // Also write listings.json for the frontend — same data, plus a
-  // pre-computed normalized "area" field per listing (via
-  // normalize-area.js) so the frontend doesn't need to run that logic on
-  // every page load. Raw address is kept too, unmodified, for
-  // transparency — the normalized area is an added filter aid, not a
-  // replacement for the original text.
   const { normalizeArea } = require('./normalize-area');
   const listingsWithArea = filteredListings.map(l => ({ ...l, normalizedArea: normalizeArea(l.address) }));
   const jsonFilename = searchType === 'sale' ? 'listings-sale.json' : 'listings.json';
