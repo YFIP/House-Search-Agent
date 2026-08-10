@@ -2,21 +2,6 @@ name: Scrape and Deploy Listings
 
 on:
   schedule:
-    # Two triggers covering both possible UTC times for 2 AM US Eastern
-    # time (which lines up with ~8 AM Paris time year-round, since the US
-    # and France both shift their clocks by the same hour for DST, just
-    # on slightly different calendar dates). GitHub Actions cron only
-    # runs in UTC, so a single fixed time would drift by an hour for part
-    # of the year — hence two triggers. Minutes are offset from :00
-    # deliberately, since top-of-the-hour is GitHub's most congested
-    # queue slot and gets delayed the most.
-    #
-    # Both fire daily. check-schedule below no longer tries to match an
-    # exact hour (schedule delivery can be delayed by hours under load,
-    # which was silently skipping legitimate runs) — instead it checks
-    # whether today's US-Eastern-date scrape has already completed, so
-    # whichever trigger arrives first (however late) runs, and the other
-    # is correctly skipped as a same-day duplicate.
     - cron: '13 6 * * *'   # ~2:13 AM EDT (Eastern Daylight Time, UTC-4)
     - cron: '13 7 * * *'   # ~2:13 AM EST (Eastern Standard Time, UTC-5)
   workflow_dispatch:
@@ -31,11 +16,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Runs once per US-Eastern calendar day, regardless of which of the two
-  # triggers above fires first or how late GitHub delivers it. Reads the
-  # date of the last successful run (a marker file committed by
-  # merge-and-commit) and only proceeds if today hasn't run yet. Manual
-  # runs (workflow_dispatch) always proceed regardless of date.
   check-schedule:
     runs-on: ubuntu-latest
     outputs:
@@ -61,17 +41,20 @@ jobs:
             echo "should_run=true" >> "$GITHUB_OUTPUT"
           fi
 
-  # Runs Barnes, Barnes-Suburbs, Junot, Book-a-Flat, and Perenium in one
-  # job. SeLoger (Paris-wide) is deliberately NOT run here or anywhere in
-  # this pipeline: its own page/result cap was removed (uncapped by
-  # design), which made a full run both too slow for any single job
-  # budget AND almost entirely redundant — the 20-way per-arrondissement
-  # matrix below (scrape-seloger-arrondissement) already covers all of
-  # Paris with its own enrichment, in properly parallelized isolated jobs,
-  # without this bottleneck. Confirmed live: a Paris-wide run found 5037
-  # valid rent listings but needed ~3.8 hours just for detail enrichment
-  # at a safe anti-bot concurrency, blowing well past any reasonable job
-  # timeout for what the arrondissement matrix already provides.
+  # Runs Barnes, Barnes-Suburbs, Book-a-Flat, and Perenium in one job.
+  #
+  # FIX (this pass): Junot removed from this job's scope. It now does
+  # real detail-page enrichment (added to recover furnished status — see
+  # junot-scraper.js's header comment for the live evidence that furnished
+  # status only exists on Junot's detail pages, not the summary card),
+  # covers ~50 locations with up to 849 real sale listings, and was at
+  # real risk of the same "job times out mid-enrichment, writes nothing
+  # at all" failure DanielFeau/Eiffel Housing already hit before being
+  # isolated. See scrape-junot / scrape-junot-sale below.
+  #
+  # SeLoger (Paris-wide) is deliberately NOT run here or anywhere in
+  # this pipeline: see original note — the per-arrondissement matrix
+  # already covers all of Paris with its own enrichment.
   scrape-main:
     needs: check-schedule
     if: needs.check-schedule.outputs.should_run == 'true'
@@ -84,7 +67,7 @@ jobs:
           node-version: '20'
       - name: Install dependencies
         run: npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth exceljs
-      - name: Scrape main sources (excludes SeLoger, SeLoger-Suburbs)
+      - name: Scrape main sources (excludes SeLoger, SeLoger-Suburbs, Junot)
         run: node scrape-main-sources.js rent details
       - name: Upload main sources output
         uses: actions/upload-artifact@v4
@@ -93,11 +76,6 @@ jobs:
           path: output-main.json
           retention-days: 1
 
-  # Sale-listing counterpart to scrape-main above. All 10 sources were
-  # individually verified live to support sale/buy listings this session
-  # — Barnes (938 real), Junot (849 real), SeLoger (~426/arrondissement),
-  # DanielFeau (high volume, up to 18+ pages/arrondissement), and smaller
-  # confirmed volumes for the rest.
   scrape-main-sale:
     needs: check-schedule
     if: needs.check-schedule.outputs.should_run == 'true'
@@ -110,7 +88,7 @@ jobs:
           node-version: '20'
       - name: Install dependencies
         run: npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth exceljs
-      - name: Scrape main sources - sale (excludes SeLoger, SeLoger-Suburbs)
+      - name: Scrape main sources - sale (excludes SeLoger, SeLoger-Suburbs, Junot)
         run: node scrape-main-sources.js sale details
       - name: Upload main sources sale output
         uses: actions/upload-artifact@v4
@@ -119,31 +97,13 @@ jobs:
           path: output-main-sale.json
           retention-days: 1
 
-  # Each SeLoger suburb town gets its OWN isolated job (own runner, own
-  # session) — testing whether SeLoger's anti-bot system is flagging the
-  # PATTERN of many distinct location searches within one session, not
-  # just request volume. Evidence from single-process testing: search #1-2
-  # in a session always succeed, #3+ never do, regardless of concurrency,
-  # delay, or browser freshness tried within one process.
-  #
-  # Sharded per town (shard/shardCount in the matrix): real evidence found
-  # live (2026-07-21) that removing the page/result cap wasn't enough on
-  # its own — the busiest towns (Boulogne-Billancourt: 1522 sale listings)
-  # need up to ~70 minutes just for detail-page enrichment, blowing past
-  # even a generously bumped timeout. Each shard does its own full
-  # pagination pass but only enriches its slice of the listings (see
-  # scrapeTown's shardIndex/shardCount in seloger-suburbs-scraper.js) —
-  # splitting the expensive part across parallel isolated jobs instead of
-  # one job racing an ever-bigger clock. Shard counts below are sized so
-  # each shard's enrichment stays around ~20-25 min, computed from real
-  # listing counts measured live this session (target ~450 listings/shard).
   scrape-seloger-suburb:
     needs: check-schedule
     if: needs.check-schedule.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
-      fail-fast: false # one shard failing shouldn't cancel the others
+      fail-fast: false
       matrix:
         include:
           - { town: neuilly-sur-seine, shard: 0, shardCount: 1 }
@@ -184,12 +144,6 @@ jobs:
           path: output-seloger-${{ matrix.town }}-shard-${{ matrix.shard }}.json
           retention-days: 1
 
-  # Sale-listing counterpart to scrape-seloger-suburb above — identical
-  # town list and pagination mechanism, verified live to work for sale via
-  # the same distributionTypes=Buy parameter confirmed for the main
-  # SeLoger scraper. Sharded the same way, but sale volume runs much
-  # higher than rent (e.g. Issy-les-Moulineaux: 232 rent vs 1493 sale),
-  # so shard counts differ significantly from the rent job above.
   scrape-seloger-suburb-sale:
     needs: check-schedule
     if: needs.check-schedule.outputs.should_run == 'true'
@@ -261,16 +215,6 @@ jobs:
           path: output-seloger-${{ matrix.town }}-shard-${{ matrix.shard }}-sale.json
           retention-days: 1
 
-  # Each Paris arrondissement gets its OWN isolated job too — same trick
-  # that fixed the suburbs, now used to get past Paris' unsolved
-  # pagination problem (seloger-scraper.js's own notes: 3 different
-  # pagination strategies tried, all failed) by treating each
-  # arrondissement as its own single-page "location" search instead.
-  #
-  # Sharded per arrondissement (shard/shardCount in the matrix): same
-  # reasoning and sizing as scrape-seloger-suburb above — the 15th, 16th,
-  # and 17th need 2 shards each for rent (784/706/566 listings), sized so
-  # each shard's enrichment stays around ~20-25 min.
   scrape-seloger-arrondissement:
     needs: check-schedule
     if: needs.check-schedule.outputs.should_run == 'true'
@@ -319,12 +263,6 @@ jobs:
           path: output-seloger-arr-${{ matrix.arr }}-shard-${{ matrix.shard }}.json
           retention-days: 1
 
-  # Sale-listing counterpart to scrape-seloger-arrondissement above — same
-  # 20 arrondissements, verified live to work for sale via the same
-  # /classified-search?...&page=N mechanism confirmed for rent. Sale
-  # volume runs dramatically higher than rent (arr 15: 784 rent vs 2075
-  # sale, needing 5 shards vs 2) — shard counts computed independently
-  # from real sale-listing counts measured live this session.
   scrape-seloger-arrondissement-sale:
     needs: check-schedule
     if: needs.check-schedule.outputs.should_run == 'true'
@@ -368,15 +306,6 @@ jobs:
           - { arr: 16, shard: 0, shardCount: 3 }
           - { arr: 16, shard: 1, shardCount: 3 }
           - { arr: 16, shard: 2, shardCount: 3 }
-          # arr 17/18 corrected from REAL production run data (2026-07-21):
-          # the earlier live verification pass badly undercounted both (24
-          # and 443) due to the same anti-bot corruption pattern already
-          # seen and caught for 7 suburb towns — this time it slipped
-          # through uncaught, and both single-shard jobs hung for the full
-          # 60-minute timeout instead of completing. The actual production
-          # run reached page 70/1701 listings (arr 17) and page 76/2095
-          # listings (arr 18), both right at their natural end (0 new on
-          # the final page) when cancelled — those are the real counts.
           - { arr: 17, shard: 0, shardCount: 4 }
           - { arr: 17, shard: 1, shardCount: 4 }
           - { arr: 17, shard: 2, shardCount: 4 }
@@ -408,14 +337,6 @@ jobs:
           path: output-seloger-arr-${{ matrix.arr }}-shard-${{ matrix.shard }}-sale.json
           retention-days: 1
 
-  # Each ParisRental page gets its OWN isolated job — tried after the
-  # combined scraper returned 0 results specifically on GitHub Actions
-  # while working fine from a home network with identical code, pointing
-  # to GitHub's IP range itself being blocked. Not guaranteed to help
-  # (unlike SeLoger's session-pattern issue, this looks like a more
-  # straightforward IP block, which isolation may not fix since every
-  # isolated job still originates from the same GitHub IP range) — this
-  # is a genuine experiment, not a confirmed fix.
   scrape-parisrental-page:
     needs: check-schedule
     if: needs.check-schedule.outputs.should_run == 'true'
@@ -449,9 +370,6 @@ jobs:
           path: output-parisrental-${{ matrix.category }}-${{ matrix.page }}.json
           retention-days: 1
 
-  # Sale-listing counterpart — a single job, not a matrix, since sale
-  # inventory was confirmed live at just 4 listings total (vs the ~93
-  # rent listings across furnished+unfurnished needing 8 paginated jobs).
   scrape-parisrental-sale:
     needs: check-schedule
     if: needs.check-schedule.outputs.should_run == 'true'
@@ -473,11 +391,6 @@ jobs:
           path: output-parisrental-sale-1.json
           retention-days: 1
 
-  # DanielFeau moved to its own isolated job after adding real detail-page
-  # enrichment for elevator/furnished/bathroom info - can have up to 600
-  # listings, and enriching all of them at a cautious, anti-bot-safe rate
-  # (low concurrency, small delays) needs more time than scrape-main's
-  # shared 15-minute budget with Barnes/Junot/SeLoger-main could afford.
   scrape-danielfeau:
     needs: check-schedule
     if: needs.check-schedule.outputs.should_run == 'true'
@@ -520,11 +433,6 @@ jobs:
           path: output-danielfeau-sale.json
           retention-days: 1
 
-  # Eiffel Housing moved to its own isolated job after adding real
-  # detail-page enrichment for bathroom info - confirmed live that
-  # scrape-main got cancelled at its 15-minute timeout mid-way through
-  # Eiffel Housing's enrichment step (152 listings), which didn't exist
-  # before this session and wasn't accounted for in the shared budget.
   scrape-eiffel-housing:
     needs: check-schedule
     if: needs.check-schedule.outputs.should_run == 'true'
@@ -567,10 +475,65 @@ jobs:
           path: output-eiffel-housing-sale.json
           retention-days: 1
 
-  # Downloads every artifact from all eight jobs above, merges everything,
-  # and writes/commits the final Excel file.
+  # NEW (this pass): Junot moved to its own isolated job after adding
+  # real detail-page enrichment for furnished status — see
+  # junot-scraper.js's header comment for the live evidence that
+  # furnished status only exists on the detail page for this source, and
+  # scrape-main-sources.js's header comment for why that made it unsafe
+  # to keep running inside the shared 15-minute scrape-main budget.
+  # Timeout sized generously above DanielFeau's 30 minutes since Junot's
+  # confirmed sale volume (849 real listings) is comparable in scale.
+  scrape-junot:
+    needs: check-schedule
+    if: needs.check-schedule.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm install puppeteer
+      - name: Scrape Junot rent in isolation
+        run: node scrape-single-junot.js rent
+      - name: Upload result
+        uses: actions/upload-artifact@v4
+        with:
+          name: output-junot
+          path: output-junot.json
+          retention-days: 1
+
+  scrape-junot-sale:
+    needs: check-schedule
+    if: needs.check-schedule.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm install puppeteer
+      - name: Scrape Junot sale in isolation
+        run: node scrape-single-junot.js sale
+      - name: Upload sale result
+        uses: actions/upload-artifact@v4
+        with:
+          name: output-junot-sale
+          path: output-junot-sale.json
+          retention-days: 1
+
+  # Downloads every artifact from all jobs above, merges everything, and
+  # writes/commits the final Excel file.
+  #
+  # FIX (this pass): added scrape-junot and scrape-junot-sale to the
+  # needs list, so the merge waits for Junot's isolated job to finish
+  # (or fail) before assembling the final output — same as every other
+  # isolated source below.
   merge-and-commit:
-    needs: [check-schedule, scrape-main, scrape-main-sale, scrape-seloger-suburb, scrape-seloger-suburb-sale, scrape-seloger-arrondissement, scrape-seloger-arrondissement-sale, scrape-parisrental-page, scrape-parisrental-sale, scrape-danielfeau, scrape-danielfeau-sale, scrape-eiffel-housing, scrape-eiffel-housing-sale]
+    needs: [check-schedule, scrape-main, scrape-main-sale, scrape-seloger-suburb, scrape-seloger-suburb-sale, scrape-seloger-arrondissement, scrape-seloger-arrondissement-sale, scrape-parisrental-page, scrape-parisrental-sale, scrape-danielfeau, scrape-danielfeau-sale, scrape-eiffel-housing, scrape-eiffel-housing-sale, scrape-junot, scrape-junot-sale]
     if: needs.check-schedule.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 8
