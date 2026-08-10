@@ -1,5 +1,18 @@
 // barnes-suburbs-scraper.js
 //
+// FIX (this pass): this file never called extractDetailFeatures() at
+// all — elevator/balcony/furnished were simply absent from every listing
+// it produced (not null, literally missing keys), meaning every Barnes
+// suburb listing showed as "Not mentioned" for Furnished regardless of
+// what the real listing said. Added a summary-card pass, same pattern
+// already proven for Junot/DanielFeau/Book-a-Flat/Perenium. This does
+// NOT add a detail-page visit (no new network cost/timeout risk) — it
+// only reads text this scraper already fetches. Some listings that only
+// state furnishing status on their own detail page (not the summary
+// card) will still show "Not mentioned" after this fix; a future pass
+// could add real detail-page enrichment here too, following the pattern
+// in scrape-runner.js, if that's worth the added cost for this source.
+//
 // FIXED — real bug found via live evidence during testing: the original
 // URL format (https://www.barnes-international.com/en/for-rent/france/
 // {slug}.html) does NOT match Barnes' real URL pattern for most suburb
@@ -19,6 +32,7 @@
 // coverage was already handled.
 
 const parseListing = require('./parse-listing');
+const { extractDetailFeatures } = require('./parse-listing');
 
 const SUBURB_TOWNS = [
   { slug: 'neuilly-sur-seine', postal: '92200', displayName: 'Neuilly-sur-Seine' },
@@ -38,26 +52,13 @@ const SUBURB_TOWNS = [
 
 const LISTING_SELECTOR = 'a[href*="/ref-"]';
 const NEXT_BUTTON_SELECTOR = 'a[href^="javascript:annonces_suivantes"]';
-// Type-aware caps: real evidence shows Neuilly-sur-Seine alone has 151
-// sale listings (vs only 28 for rent) — the old flat 100 cap, while
-// already generous for rent, would cut off real sale inventory for
-// popular towns. Kept at 100 for rent (comfortably above any real rent
-// count seen) and raised to 250 for purchase (comfortable margin above
-// the confirmed 151 real max).
 const MAX_LISTINGS_PER_TOWN_BY_TYPE = { rent: 100, sale: 250 };
 const MAX_PAGE_CLICKS_BY_TYPE = { rent: 10, sale: 20 };
-const TOWN_CONCURRENCY = 2; // kept modest given the earlier nested-concurrency lesson from SeLoger-suburbs
+const TOWN_CONCURRENCY = 2;
 
 function extractListings(townSlug) {
   const results = [];
   const seen = new Set();
-  // Tightened after finding Marseille/Lyon/Lille (other French cities) AND
-  // Dubai/Athens/London etc. all bleeding in via Barnes' apparent "you
-  // might also like" carousel — the generic /france/ filter wasn't
-  // precise enough. Since we already know exactly which town we're
-  // scraping, requiring that EXACT slug in the URL is far more precise:
-  // it excludes every other city/country AND cross-contamination from a
-  // different suburb town's own carousel suggestions.
   const links = Array.from(document.querySelectorAll('a[href*="/ref-"]'))
     .filter(l => l.href.includes('/france/' + townSlug));
 
@@ -149,12 +150,11 @@ async function scrapeTown(browser, town, searchType) {
   let page;
   try {
     page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'); // fixes 403 blocks from bot-detection checking for the default 'HeadlessChrome' signature (confirmed root cause via live ParisRental testing)
+    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
     await page.setDefaultNavigationTimeout(20000);
     const urlBase = searchType === 'sale'
       ? 'https://www.barnes-international.com/en/for-sale/france/'
       : 'https://www.barnes-international.com/en/for-rent/france/';
-    // Correct format: {slug}-{postal}/ — confirmed live, NOT {slug}.html
     const url = `${urlBase}${town.slug}-${town.postal}/`;
 
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
@@ -170,10 +170,6 @@ async function scrapeTown(browser, town, searchType) {
 
     const raw = await collectWithPagination(page, town.slug, maxListings, maxPageClicks);
     await page.close();
-    // Defensive cap: a live run showed one town (Ville-d'Avray) returning
-    // 120 listings — 5-10x every other town in this batch, and unexplained.
-    // Capping here bounds the worst case regardless of root cause; the
-    // anomaly itself is still worth investigating separately.
     return { slug: town.slug, listings: raw.slice(0, maxListings), error: null };
 
   } catch (error) {
@@ -215,13 +211,19 @@ async function scrapeBarnesSuburbs(searchType = 'rent') {
       const town = SUBURB_TOWNS.find(t => t.slug === r.slug);
       for (const item of r.listings) {
         const listing = parseListing(item.rawText);
+        // NEW — was missing entirely before this fix. Runs directly on
+        // the summary-card text already fetched above (no extra network
+        // cost) — same pattern already proven for Junot/DanielFeau.
+        const details = extractDetailFeatures(item.rawText);
         listing.url = item.url;
         listing.source = 'Barnes';
         listing.searchType = searchType;
         listing.isExactListing = true;
-        // Override with the known town — same fix applied to SeLoger's
-        // suburb/arrondissement scrapers, for consistency across sources
-        // and reliability over re-deriving location from noisy card text.
+        listing.elevator = details.elevator;
+        listing.balcony = details.balcony;
+        listing.furnished = details.furnished;
+        if (listing.bathrooms == null) listing.bathrooms = details.bathroomsFromDetail;
+        if (listing.bedrooms == null) listing.bedrooms = details.bedroomsFromDetail;
         if (town) listing.address = town.displayName;
         allListings.push(listing);
       }
