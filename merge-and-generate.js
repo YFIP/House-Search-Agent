@@ -1,32 +1,20 @@
 // merge-and-generate.js
-// Downloads/reads output-main.json (Barnes, Barnes-Suburbs, Book-a-Flat,
-// Perenium) plus every output-seloger-{slug}.json (one per suburb, each
-// scraped in its own isolated GitHub Actions job), the isolated
-// DanielFeau/Eiffel Housing/Junot artifacts, and every ParisRental page
-// result — merges everything, and writes the final Excel file.
+// Downloads/reads output-main.json (Barnes-Suburbs, Book-a-Flat,
+// Perenium) plus the isolated Barnes/DanielFeau/Eiffel Housing/Junot
+// artifacts, and every ParisRental page result — merges everything, and
+// writes the final Excel file.
 //
-// FIX (this pass): added handling for output-junot.json /
-// output-junot-sale.json, mirroring the existing DanielFeau/Eiffel
-// Housing blocks below, since Junot now runs as its own isolated job
-// (see scrape-single-junot.js) instead of inside output-main.json.
+// FIX (this pass): SeLoger removed entirely — findSeLogerSuburbFiles/
+// findSeLogerArrondissementFiles and the merge loops that used them are
+// gone, along with the underlying scrapers and their GitHub Actions
+// matrix. In their place: added handling for output-barnes.json /
+// output-barnes-sale.json, mirroring the existing DanielFeau/Eiffel
+// Housing/Junot blocks below, since Barnes now runs as its own isolated
+// job (see scrape-single-barnes.js) instead of inside output-main.json.
 
 const fs = require('fs');
 const path = require('path');
 const ExcelJS = require('exceljs');
-
-function findSeLogerSuburbFiles(dir, searchType) {
-  const pattern = searchType === 'sale'
-    ? /^output-seloger-(?!arr-).+-shard-\d+-sale\.json$/
-    : /^output-seloger-(?!arr-).+-shard-\d+\.json$/;
-  return fs.readdirSync(dir).filter(f => pattern.test(f));
-}
-
-function findSeLogerArrondissementFiles(dir, searchType) {
-  const pattern = searchType === 'sale'
-    ? /^output-seloger-arr-\d+-shard-\d+-sale\.json$/
-    : /^output-seloger-arr-\d+-shard-\d+\.json$/;
-  return fs.readdirSync(dir).filter(f => pattern.test(f));
-}
 
 function findParisRentalFiles(dir, searchType) {
   const pattern = searchType === 'sale'
@@ -132,7 +120,7 @@ async function main() {
   const searchType = process.argv[2] === 'sale' ? 'sale' : 'rent';
   const artifactsDir = process.argv[3] || '.';
 
-  console.log(`Merging main sources with individual SeLoger suburb results from: ${artifactsDir}`);
+  console.log(`Merging main sources with isolated-job results from: ${artifactsDir}`);
 
   const mainDataFilename = searchType === 'sale' ? 'output-main-sale.json' : 'output-main.json';
   const mainDataPath = path.join(artifactsDir, mainDataFilename);
@@ -142,12 +130,13 @@ async function main() {
   }
   const mainData = loadJson(mainDataPath);
 
-  const suburbFiles = findSeLogerSuburbFiles(artifactsDir, searchType);
-  const arrFiles = findSeLogerArrondissementFiles(artifactsDir, searchType);
   const parisRentalFiles = findParisRentalFiles(artifactsDir, searchType);
-  console.log(`Found ${suburbFiles.length} SeLoger suburb result file(s): ${suburbFiles.join(', ') || '(none)'}`);
-  console.log(`Found ${arrFiles.length} SeLoger arrondissement result file(s): ${arrFiles.join(', ') || '(none)'}`);
   console.log(`Found ${parisRentalFiles.length} ParisRental category result file(s): ${parisRentalFiles.join(', ') || '(none)'}`);
+
+  const barnesFilename = searchType === 'sale' ? 'output-barnes-sale.json' : 'output-barnes.json';
+  const barnesPath = path.join(artifactsDir, barnesFilename);
+  const barnesResult = fs.existsSync(barnesPath) ? loadJson(barnesPath) : null;
+  console.log(`Barnes result file: ${fs.existsSync(barnesPath) ? barnesFilename : '(not found)'}`);
 
   const danielFeauFilename = searchType === 'sale' ? 'output-danielfeau-sale.json' : 'output-danielfeau.json';
   const danielFeauPath = path.join(artifactsDir, danielFeauFilename);
@@ -172,37 +161,46 @@ async function main() {
   const allSourceStatus = [...mainData.sourceStatus];
   const seenUrls = new Set(allListings.map(l => l.url));
 
-  for (const file of suburbFiles) {
-    const result = loadJson(path.join(artifactsDir, file));
-    if (result.error) {
-      allSourceStatus.push({ source: `SeLoger-Suburb-${result.slug}`, found: 0, error: result.error });
+  // NEW — Barnes moved to its own isolated job (see scrape-single-barnes.js).
+  // Same pattern as DanielFeau/Eiffel Housing/Junot below.
+  if (barnesResult) {
+    if (barnesResult.error) {
+      allSourceStatus.push({ source: 'Barnes', found: 0, error: barnesResult.error });
     } else {
       let added = 0;
-      for (const listing of result.listings) {
+      for (const listing of barnesResult.listings) {
         if (seenUrls.has(listing.url)) continue;
         seenUrls.add(listing.url);
         allListings.push(listing);
         added++;
       }
-      allSourceStatus.push({ source: `SeLoger-Suburb-${result.slug}`, found: added, error: null });
+      allSourceStatus.push({ source: 'Barnes', found: added, error: null });
     }
+  } else {
+    allSourceStatus.push({ source: 'Barnes', found: 0, error: 'Isolated job artifact not found' });
   }
 
-  for (const file of arrFiles) {
-    const result = loadJson(path.join(artifactsDir, file));
-    const label = `SeLoger-Paris-${result.arrondissement}e`;
-    if (result.error) {
-      allSourceStatus.push({ source: label, found: 0, error: result.error });
+  // NEW — Orpi moved to its own isolated job (see scrape-single-orpi.js).
+  // Same pattern as Barnes/DanielFeau/Eiffel Housing/Junot above.
+  const orpiFilename = searchType === 'sale' ? 'output-orpi-sale.json' : 'output-orpi.json';
+  const orpiPath = path.join(artifactsDir, orpiFilename);
+  const orpiResult = fs.existsSync(orpiPath) ? loadJson(orpiPath) : null;
+  console.log(`Orpi result file: ${fs.existsSync(orpiPath) ? orpiFilename : '(not found)'}`);
+  if (orpiResult) {
+    if (orpiResult.error) {
+      allSourceStatus.push({ source: 'Orpi', found: 0, error: orpiResult.error });
     } else {
       let added = 0;
-      for (const listing of result.listings) {
+      for (const listing of orpiResult.listings) {
         if (seenUrls.has(listing.url)) continue;
         seenUrls.add(listing.url);
         allListings.push(listing);
         added++;
       }
-      allSourceStatus.push({ source: label, found: added, error: null });
+      allSourceStatus.push({ source: 'Orpi', found: added, error: null });
     }
+  } else {
+    allSourceStatus.push({ source: 'Orpi', found: 0, error: 'Isolated job artifact not found' });
   }
 
   for (const file of parisRentalFiles) {
