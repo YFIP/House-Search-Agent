@@ -99,8 +99,21 @@ function extractListings() {
     const href = link.href;
     if (seen.has(href)) continue;
     seen.add(href);
-    const text = (link.innerText || '').trim();
-    // Skip cards already marked let/sold — see header note.
+    // BUG FIX (2026-08-31): originally only checked link.innerText (the
+    // <a> tag's own text) for the "Loué"/"Vendu" stamp. A live run
+    // confirmed page 2 is entirely LOUÉ listings, yet they still came
+    // through — meaning the stamp likely lives in a sibling/overlay
+    // element outside the anchor itself, so link.innerText alone never
+    // saw it. Now climbing to the surrounding card like the other
+    // scrapers do, so the stamp is checked wherever it actually is.
+    let container = link;
+    let text = '';
+    for (let i = 0; i < 6; i++) {
+      container = container.parentElement;
+      if (!container) break;
+      text = container.innerText || '';
+      if (text.includes('€')) break;
+    }
     const lower = text.toLowerCase();
     if (lower.includes('lou\u00e9') || lower.includes('loue') || lower.includes('vendu')) continue;
     if (text.includes('€')) results.push({ url: href, rawText: text.slice(0, 600) });
