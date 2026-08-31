@@ -41,20 +41,26 @@ jobs:
             echo "should_run=true" >> "$GITHUB_OUTPUT"
           fi
 
-  # Runs Barnes, Barnes-Suburbs, Book-a-Flat, and Perenium in one job.
+  # Runs Barnes-Suburbs, Book-a-Flat, Perenium, Paris Seine Immobilier,
+  # Patrimoine Ouest Parisien, and AFR Immobilier in one job.
   #
-  # FIX (this pass): Junot removed from this job's scope. It now does
-  # real detail-page enrichment (added to recover furnished status — see
-  # junot-scraper.js's header comment for the live evidence that furnished
-  # status only exists on Junot's detail pages, not the summary card),
-  # covers ~50 locations with up to 849 real sale listings, and was at
-  # real risk of the same "job times out mid-enrichment, writes nothing
-  # at all" failure DanielFeau/Eiffel Housing already hit before being
-  # isolated. See scrape-junot / scrape-junot-sale below.
+  # FIX (this pass): SeLoger removed entirely — its scraper, suburb
+  # scraper, arrondissement scraper, and the ~80-shard matrix that ran
+  # them (scrape-seloger-suburb*, scrape-seloger-arrondissement* below)
+  # are all gone. Barnes also removed from this job's scope, using the
+  # CI budget freed up by that removal: scrape-runner.js does real
+  # click-until-exhausted pagination (146 rent / 938 sale live listings)
+  # plus per-listing detail-page enrichment by default, which was a real
+  # risk of the same "job times out mid-run, writes nothing at all"
+  # failure DanielFeau/Eiffel Housing/Junot already hit before being
+  # isolated. See scrape-barnes / scrape-barnes-sale below.
   #
-  # SeLoger (Paris-wide) is deliberately NOT run here or anywhere in
-  # this pipeline: see original note — the per-arrondissement matrix
-  # already covers all of Paris with its own enrichment.
+  # Junot was removed from this job's scope earlier for the same reason:
+  # it now does real detail-page enrichment (added to recover furnished
+  # status — see junot-scraper.js's header comment for the live evidence
+  # that furnished status only exists on Junot's detail pages, not the
+  # summary card), covering ~50 locations with up to 849 real sale
+  # listings. See scrape-junot / scrape-junot-sale below.
   scrape-main:
     needs: check-schedule
     if: needs.check-schedule.outputs.should_run == 'true'
@@ -67,7 +73,7 @@ jobs:
           node-version: '20'
       - name: Install dependencies
         run: npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth exceljs
-      - name: Scrape main sources (excludes SeLoger, SeLoger-Suburbs, Junot)
+      - name: Scrape main sources (excludes Barnes, Orpi, ParisRental, DanielFeau, Eiffel Housing, Junot)
         run: node scrape-main-sources.js rent details
       - name: Upload main sources output
         uses: actions/upload-artifact@v4
@@ -88,253 +94,13 @@ jobs:
           node-version: '20'
       - name: Install dependencies
         run: npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth exceljs
-      - name: Scrape main sources - sale (excludes SeLoger, SeLoger-Suburbs, Junot)
+      - name: Scrape main sources - sale (excludes Barnes, Orpi, ParisRental, DanielFeau, Eiffel Housing, Junot)
         run: node scrape-main-sources.js sale details
       - name: Upload main sources sale output
         uses: actions/upload-artifact@v4
         with:
           name: output-main-sale
           path: output-main-sale.json
-          retention-days: 1
-
-  scrape-seloger-suburb:
-    needs: check-schedule
-    if: needs.check-schedule.outputs.should_run == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { town: neuilly-sur-seine, shard: 0, shardCount: 1 }
-          - { town: boulogne-billancourt, shard: 0, shardCount: 2 }
-          - { town: boulogne-billancourt, shard: 1, shardCount: 2 }
-          - { town: suresnes, shard: 0, shardCount: 1 }
-          - { town: levallois-perret, shard: 0, shardCount: 1 }
-          - { town: rueil-malmaison, shard: 0, shardCount: 1 }
-          - { town: puteaux, shard: 0, shardCount: 1 }
-          - { town: saint-cloud, shard: 0, shardCount: 1 }
-          - { town: saint-germain-en-laye, shard: 0, shardCount: 1 }
-          - { town: le-vesinet, shard: 0, shardCount: 1 }
-          - { town: vaucresson, shard: 0, shardCount: 1 }
-          - { town: garches, shard: 0, shardCount: 1 }
-          - { town: marnes-la-coquette, shard: 0, shardCount: 1 }
-          - { town: ville-d-avray, shard: 0, shardCount: 1 }
-          - { town: courbevoie, shard: 0, shardCount: 1 }
-          - { town: versailles, shard: 0, shardCount: 1 }
-          - { town: issy-les-moulineaux, shard: 0, shardCount: 1 }
-          - { town: colombes, shard: 0, shardCount: 1 }
-          - { town: nanterre, shard: 0, shardCount: 1 }
-          - { town: chatou, shard: 0, shardCount: 1 }
-          - { town: croissy-sur-seine, shard: 0, shardCount: 1 }
-          - { town: la-celle-saint-cloud, shard: 0, shardCount: 1 }
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Install dependencies
-        run: npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth
-      - name: Scrape ${{ matrix.town }} shard ${{ matrix.shard }}/${{ matrix.shardCount }} in isolation
-        run: node scrape-single-seloger-suburb.js ${{ matrix.town }} rent ${{ matrix.shard }} ${{ matrix.shardCount }}
-      - name: Upload ${{ matrix.town }} shard ${{ matrix.shard }} result
-        uses: actions/upload-artifact@v4
-        with:
-          name: output-seloger-${{ matrix.town }}-shard-${{ matrix.shard }}
-          path: output-seloger-${{ matrix.town }}-shard-${{ matrix.shard }}.json
-          retention-days: 1
-
-  scrape-seloger-suburb-sale:
-    needs: check-schedule
-    if: needs.check-schedule.outputs.should_run == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { town: neuilly-sur-seine, shard: 0, shardCount: 3 }
-          - { town: neuilly-sur-seine, shard: 1, shardCount: 3 }
-          - { town: neuilly-sur-seine, shard: 2, shardCount: 3 }
-          - { town: boulogne-billancourt, shard: 0, shardCount: 4 }
-          - { town: boulogne-billancourt, shard: 1, shardCount: 4 }
-          - { town: boulogne-billancourt, shard: 2, shardCount: 4 }
-          - { town: boulogne-billancourt, shard: 3, shardCount: 4 }
-          - { town: suresnes, shard: 0, shardCount: 2 }
-          - { town: suresnes, shard: 1, shardCount: 2 }
-          - { town: levallois-perret, shard: 0, shardCount: 3 }
-          - { town: levallois-perret, shard: 1, shardCount: 3 }
-          - { town: levallois-perret, shard: 2, shardCount: 3 }
-          - { town: rueil-malmaison, shard: 0, shardCount: 3 }
-          - { town: rueil-malmaison, shard: 1, shardCount: 3 }
-          - { town: rueil-malmaison, shard: 2, shardCount: 3 }
-          - { town: puteaux, shard: 0, shardCount: 3 }
-          - { town: puteaux, shard: 1, shardCount: 3 }
-          - { town: puteaux, shard: 2, shardCount: 3 }
-          - { town: saint-cloud, shard: 0, shardCount: 2 }
-          - { town: saint-cloud, shard: 1, shardCount: 2 }
-          - { town: saint-germain-en-laye, shard: 0, shardCount: 2 }
-          - { town: saint-germain-en-laye, shard: 1, shardCount: 2 }
-          - { town: le-vesinet, shard: 0, shardCount: 1 }
-          - { town: vaucresson, shard: 0, shardCount: 1 }
-          - { town: garches, shard: 0, shardCount: 1 }
-          - { town: marnes-la-coquette, shard: 0, shardCount: 1 }
-          - { town: ville-d-avray, shard: 0, shardCount: 1 }
-          - { town: courbevoie, shard: 0, shardCount: 3 }
-          - { town: courbevoie, shard: 1, shardCount: 3 }
-          - { town: courbevoie, shard: 2, shardCount: 3 }
-          - { town: versailles, shard: 0, shardCount: 3 }
-          - { town: versailles, shard: 1, shardCount: 3 }
-          - { town: versailles, shard: 2, shardCount: 3 }
-          - { town: issy-les-moulineaux, shard: 0, shardCount: 4 }
-          - { town: issy-les-moulineaux, shard: 1, shardCount: 4 }
-          - { town: issy-les-moulineaux, shard: 2, shardCount: 4 }
-          - { town: issy-les-moulineaux, shard: 3, shardCount: 4 }
-          - { town: colombes, shard: 0, shardCount: 3 }
-          - { town: colombes, shard: 1, shardCount: 3 }
-          - { town: colombes, shard: 2, shardCount: 3 }
-          - { town: nanterre, shard: 0, shardCount: 2 }
-          - { town: nanterre, shard: 1, shardCount: 2 }
-          - { town: chatou, shard: 0, shardCount: 2 }
-          - { town: chatou, shard: 1, shardCount: 2 }
-          - { town: croissy-sur-seine, shard: 0, shardCount: 1 }
-          - { town: la-celle-saint-cloud, shard: 0, shardCount: 1 }
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Install dependencies
-        run: npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth
-      - name: Scrape ${{ matrix.town }} sale shard ${{ matrix.shard }}/${{ matrix.shardCount }} in isolation
-        run: node scrape-single-seloger-suburb.js ${{ matrix.town }} sale ${{ matrix.shard }} ${{ matrix.shardCount }}
-      - name: Upload ${{ matrix.town }} sale shard ${{ matrix.shard }} result
-        uses: actions/upload-artifact@v4
-        with:
-          name: output-seloger-${{ matrix.town }}-shard-${{ matrix.shard }}-sale
-          path: output-seloger-${{ matrix.town }}-shard-${{ matrix.shard }}-sale.json
-          retention-days: 1
-
-  scrape-seloger-arrondissement:
-    needs: check-schedule
-    if: needs.check-schedule.outputs.should_run == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { arr: 1, shard: 0, shardCount: 1 }
-          - { arr: 2, shard: 0, shardCount: 1 }
-          - { arr: 3, shard: 0, shardCount: 1 }
-          - { arr: 4, shard: 0, shardCount: 1 }
-          - { arr: 5, shard: 0, shardCount: 1 }
-          - { arr: 6, shard: 0, shardCount: 1 }
-          - { arr: 7, shard: 0, shardCount: 1 }
-          - { arr: 8, shard: 0, shardCount: 1 }
-          - { arr: 9, shard: 0, shardCount: 1 }
-          - { arr: 10, shard: 0, shardCount: 1 }
-          - { arr: 11, shard: 0, shardCount: 1 }
-          - { arr: 12, shard: 0, shardCount: 1 }
-          - { arr: 13, shard: 0, shardCount: 1 }
-          - { arr: 14, shard: 0, shardCount: 1 }
-          - { arr: 15, shard: 0, shardCount: 2 }
-          - { arr: 15, shard: 1, shardCount: 2 }
-          - { arr: 16, shard: 0, shardCount: 2 }
-          - { arr: 16, shard: 1, shardCount: 2 }
-          - { arr: 17, shard: 0, shardCount: 2 }
-          - { arr: 17, shard: 1, shardCount: 2 }
-          - { arr: 18, shard: 0, shardCount: 1 }
-          - { arr: 19, shard: 0, shardCount: 1 }
-          - { arr: 20, shard: 0, shardCount: 1 }
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Install dependencies
-        run: npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth
-      - name: Scrape arrondissement ${{ matrix.arr }} shard ${{ matrix.shard }}/${{ matrix.shardCount }} in isolation
-        run: node scrape-single-seloger-arrondissement.js ${{ matrix.arr }} rent ${{ matrix.shard }} ${{ matrix.shardCount }}
-      - name: Upload arrondissement ${{ matrix.arr }} shard ${{ matrix.shard }} result
-        uses: actions/upload-artifact@v4
-        with:
-          name: output-seloger-arr-${{ matrix.arr }}-shard-${{ matrix.shard }}
-          path: output-seloger-arr-${{ matrix.arr }}-shard-${{ matrix.shard }}.json
-          retention-days: 1
-
-  scrape-seloger-arrondissement-sale:
-    needs: check-schedule
-    if: needs.check-schedule.outputs.should_run == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { arr: 1, shard: 0, shardCount: 1 }
-          - { arr: 2, shard: 0, shardCount: 1 }
-          - { arr: 3, shard: 0, shardCount: 2 }
-          - { arr: 3, shard: 1, shardCount: 2 }
-          - { arr: 4, shard: 0, shardCount: 2 }
-          - { arr: 4, shard: 1, shardCount: 2 }
-          - { arr: 5, shard: 0, shardCount: 2 }
-          - { arr: 5, shard: 1, shardCount: 2 }
-          - { arr: 6, shard: 0, shardCount: 2 }
-          - { arr: 6, shard: 1, shardCount: 2 }
-          - { arr: 7, shard: 0, shardCount: 1 }
-          - { arr: 8, shard: 0, shardCount: 2 }
-          - { arr: 8, shard: 1, shardCount: 2 }
-          - { arr: 9, shard: 0, shardCount: 2 }
-          - { arr: 9, shard: 1, shardCount: 2 }
-          - { arr: 10, shard: 0, shardCount: 2 }
-          - { arr: 10, shard: 1, shardCount: 2 }
-          - { arr: 11, shard: 0, shardCount: 3 }
-          - { arr: 11, shard: 1, shardCount: 3 }
-          - { arr: 11, shard: 2, shardCount: 3 }
-          - { arr: 12, shard: 0, shardCount: 2 }
-          - { arr: 12, shard: 1, shardCount: 2 }
-          - { arr: 13, shard: 0, shardCount: 1 }
-          - { arr: 14, shard: 0, shardCount: 3 }
-          - { arr: 14, shard: 1, shardCount: 3 }
-          - { arr: 14, shard: 2, shardCount: 3 }
-          - { arr: 15, shard: 0, shardCount: 5 }
-          - { arr: 15, shard: 1, shardCount: 5 }
-          - { arr: 15, shard: 2, shardCount: 5 }
-          - { arr: 15, shard: 3, shardCount: 5 }
-          - { arr: 15, shard: 4, shardCount: 5 }
-          - { arr: 16, shard: 0, shardCount: 3 }
-          - { arr: 16, shard: 1, shardCount: 3 }
-          - { arr: 16, shard: 2, shardCount: 3 }
-          - { arr: 17, shard: 0, shardCount: 4 }
-          - { arr: 17, shard: 1, shardCount: 4 }
-          - { arr: 17, shard: 2, shardCount: 4 }
-          - { arr: 17, shard: 3, shardCount: 4 }
-          - { arr: 18, shard: 0, shardCount: 5 }
-          - { arr: 18, shard: 1, shardCount: 5 }
-          - { arr: 18, shard: 2, shardCount: 5 }
-          - { arr: 18, shard: 3, shardCount: 5 }
-          - { arr: 18, shard: 4, shardCount: 5 }
-          - { arr: 19, shard: 0, shardCount: 3 }
-          - { arr: 19, shard: 1, shardCount: 3 }
-          - { arr: 19, shard: 2, shardCount: 3 }
-          - { arr: 20, shard: 0, shardCount: 3 }
-          - { arr: 20, shard: 1, shardCount: 3 }
-          - { arr: 20, shard: 2, shardCount: 3 }
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Install dependencies
-        run: npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth
-      - name: Scrape arrondissement ${{ matrix.arr }} sale shard ${{ matrix.shard }}/${{ matrix.shardCount }} in isolation
-        run: node scrape-single-seloger-arrondissement.js ${{ matrix.arr }} sale ${{ matrix.shard }} ${{ matrix.shardCount }}
-      - name: Upload arrondissement ${{ matrix.arr }} sale shard ${{ matrix.shard }} result
-        uses: actions/upload-artifact@v4
-        with:
-          name: output-seloger-arr-${{ matrix.arr }}-shard-${{ matrix.shard }}-sale
-          path: output-seloger-arr-${{ matrix.arr }}-shard-${{ matrix.shard }}-sale.json
           retention-days: 1
 
   scrape-parisrental-page:
@@ -525,15 +291,109 @@ jobs:
           path: output-junot-sale.json
           retention-days: 1
 
+  # NEW (this pass): Barnes moved to its own isolated job, using the CI
+  # budget freed up by removing SeLoger's ~80-shard matrix. Timeout sized
+  # above the 15-minute shared budget it used to share with Barnes-Suburbs/
+  # Book-a-Flat/Perenium, since it also does per-listing detail-page
+  # enrichment (concurrency 3) over up to 938 live sale listings.
+  scrape-barnes:
+    needs: check-schedule
+    if: needs.check-schedule.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm install puppeteer
+      - name: Scrape Barnes rent in isolation
+        run: node scrape-single-barnes.js rent
+      - name: Upload result
+        uses: actions/upload-artifact@v4
+        with:
+          name: output-barnes
+          path: output-barnes.json
+          retention-days: 1
+
+  scrape-barnes-sale:
+    needs: check-schedule
+    if: needs.check-schedule.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm install puppeteer
+      - name: Scrape Barnes sale in isolation
+        run: node scrape-single-barnes.js sale
+      - name: Upload sale result
+        uses: actions/upload-artifact@v4
+        with:
+          name: output-barnes-sale
+          path: output-barnes-sale.json
+          retention-days: 1
+
+  # NEW (this pass): Orpi's confirmed live sale volume (451 listings, 31
+  # pages) plus per-listing detail-page enrichment is too large for
+  # scrape-main's shared budget — same isolated-job treatment as Barnes.
+  scrape-orpi:
+    needs: check-schedule
+    if: needs.check-schedule.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm install puppeteer
+      - name: Scrape Orpi rent in isolation
+        run: node scrape-single-orpi.js rent
+      - name: Upload result
+        uses: actions/upload-artifact@v4
+        with:
+          name: output-orpi
+          path: output-orpi.json
+          retention-days: 1
+
+  scrape-orpi-sale:
+    needs: check-schedule
+    if: needs.check-schedule.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm install puppeteer
+      - name: Scrape Orpi sale in isolation
+        run: node scrape-single-orpi.js sale
+      - name: Upload sale result
+        uses: actions/upload-artifact@v4
+        with:
+          name: output-orpi-sale
+          path: output-orpi-sale.json
+          retention-days: 1
+
   # Downloads every artifact from all jobs above, merges everything, and
   # writes/commits the final Excel file.
   #
-  # FIX (this pass): added scrape-junot and scrape-junot-sale to the
-  # needs list, so the merge waits for Junot's isolated job to finish
-  # (or fail) before assembling the final output — same as every other
-  # isolated source below.
+  # FIX (this pass): removed scrape-seloger-suburb/-sale and
+  # scrape-seloger-arrondissement/-sale from the needs list (jobs
+  # deleted along with SeLoger). Added scrape-barnes/-sale and
+  # scrape-orpi/-sale, so the merge waits for their isolated jobs to
+  # finish (or fail) before assembling the final output — same as every
+  # other isolated source below.
   merge-and-commit:
-    needs: [check-schedule, scrape-main, scrape-main-sale, scrape-seloger-suburb, scrape-seloger-suburb-sale, scrape-seloger-arrondissement, scrape-seloger-arrondissement-sale, scrape-parisrental-page, scrape-parisrental-sale, scrape-danielfeau, scrape-danielfeau-sale, scrape-eiffel-housing, scrape-eiffel-housing-sale, scrape-junot, scrape-junot-sale]
+    needs: [check-schedule, scrape-main, scrape-main-sale, scrape-barnes, scrape-barnes-sale, scrape-orpi, scrape-orpi-sale, scrape-parisrental-page, scrape-parisrental-sale, scrape-danielfeau, scrape-danielfeau-sale, scrape-eiffel-housing, scrape-eiffel-housing-sale, scrape-junot, scrape-junot-sale]
     if: needs.check-schedule.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 8
