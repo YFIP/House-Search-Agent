@@ -4,15 +4,28 @@
 // Vésinet and the western suburbs (not Paris intra-muros) — runs on the
 // Jalis real-estate platform.
 //
-// VERIFIED LIVE (2026-08-30):
-//   - Rent: https://www.heliximmobilier.com/location-w1
-//     — real pagination confirmed: location-w2, location-w3 ... location-w4
-//     (4 pages seen in the page's own pager).
-//   - Sale: https://www.heliximmobilier.com/vente-w1 (same "-wN" pattern
-//     assumed for pagination; not independently page-count-verified, but
-//     the URL scheme itself — vente-w1 as the sale-listing landing page —
-//     is confirmed from the site's own nav menu).
-//   - Listing link pattern: a[href*="/details-"] — e.g.
+// VERIFIED LIVE (2026-08-30, re-checked 2026-08-31 after a live run
+// returned 0 listings):
+//   - BUG FIX #1: switched from /location-w1 (a MIXED category page
+//     that includes "Bureaux" — commercial office space — alongside
+//     apartments, confirmed via a live screenshot) to
+//     /location-appartements-w1, the apartment-only page. Cleaner data
+//     regardless of the 0-listings bug below.
+//   - BUG FIX #2: this scraper never had a cookie-consent-accept step,
+//     unlike every other scraper in this repo that needs one (see
+//     scrape-runner.js's Barnes handling). Re-added defensively, since
+//     a consent gate blocking content render is a plausible cause for
+//     a real page (confirmed loading with real content, per a live
+//     screenshot) producing exactly 0 extracted listings in production.
+//   - BUG FIX #3: bumped the waitForSelector timeout (10s -> 20s) and
+//     added a diagnostic fallback: if the selector never appears, logs
+//     the page title and body-text length so the NEXT run's log tells
+//     us definitively whether this was a bot-block (near-empty body) or
+//     something else (real content present, selector still not
+//     matching) — needed since "the page loaded fine" isn't precise
+//     enough to know which of those is actually happening.
+//   - Listing link pattern: a[href*="/details-"] — CONFIRMED still
+//     valid via a fresh live fetch (2026-08-31): e.g.
 //     /details-chambourcy+location+d+un+appartement+de+2+pieces+au+calme-2371
 //   - Price format: "4 500\n €  /mois\n Mensuel" — note the real line
 //     break between the number and "€" in the rendered text. Collapsing
@@ -23,8 +36,8 @@
 const parseListing = require('./parse-listing');
 const { extractDetailFeatures, mergeFeature } = require('./parse-listing');
 
-const RENT_URL = 'https://www.heliximmobilier.com/location-w';
-const SALE_URL = 'https://www.heliximmobilier.com/vente-w';
+const RENT_URL = 'https://www.heliximmobilier.com/location-appartements-w';
+const SALE_URL = 'https://www.heliximmobilier.com/vente-appartements-w';
 const LISTING_SELECTOR = 'a[href*="/details-"]';
 const MAX_PAGES = 10; // safety cap, well above the 4 rent pages actually observed
 const DETAIL_FETCH_CONCURRENCY = 2;
@@ -126,10 +139,30 @@ async function scrapeHelixImmobilier(searchType = 'rent') {
       console.log(`[Helix Immobilier] Navigating to ${url}`);
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
 
+      // Accept cookie banner if present — this scraper never had this
+      // step before, unlike every other scraper in this repo. Harmless
+      // if there's no banner; a plausible fix if a consent gate was
+      // blocking content render in production.
+      await page.evaluate(() => {
+        Array.from(document.querySelectorAll('button')).forEach(btn => {
+          const t = (btn.innerText || '').toLowerCase();
+          if (t.includes('accepter') || t.includes('autoriser') || t.includes('tout accepter')) btn.click();
+        });
+      }).catch(() => {});
+      await new Promise(r => setTimeout(r, 1500));
+
       try {
-        await page.waitForSelector(LISTING_SELECTOR, { timeout: 10000 });
+        await page.waitForSelector(LISTING_SELECTOR, { timeout: 20000 });
       } catch (e) {
-        console.log(`[Helix Immobilier] No listings found on page ${pageNum} — assuming end of results.`);
+        // DIAGNOSTIC (2026-08-31): log what's actually on the page when
+        // the selector never appears, so the next run's log tells us
+        // whether this is a bot-block (near-empty body) or something
+        // else entirely (real content, still no match).
+        const diag = await page.evaluate(() => ({
+          title: document.title,
+          bodyLength: (document.body && document.body.innerText || '').length
+        })).catch(() => ({ title: '(eval failed)', bodyLength: -1 }));
+        console.log(`[Helix Immobilier] No listings found on page ${pageNum} — assuming end of results. DIAG: title="${diag.title}" bodyTextLength=${diag.bodyLength}`);
         await page.close();
         break;
       }
