@@ -1,6 +1,9 @@
 // generate-listing-excel.js
-// Runs the combiner (Barnes, Barnes-Suburbs, Junot, SeLoger, SeLoger-Suburbs
-// — whatever succeeds) and writes ONE Excel file.
+// Runs the combiner (Barnes, Barnes-Suburbs, Junot, Book-a-Flat, Perenium,
+// ParisRental, DanielFeau, Eiffel Housing — whatever succeeds) and writes
+// ONE Excel file. Not part of the scheduled CI pipeline (see
+// scrape-deploy.yml/merge-and-generate.js for that) — this is a standalone
+// manual-run script.
 //
 // IMPORTANT: always writes to the SAME filename ("listings.xlsx" /
 // "listings-purchase.xlsx") — never a date-stamped name. That means each
@@ -34,10 +37,9 @@ async function main() {
     views: [{ state: 'frozen', ySplit: 1 }] // freeze header row
   });
 
-  // No longer gated on the fetchDetails flag — SeLoger always enriches
-  // regardless of that flag (only Barnes' optional slow fetch respects it),
-  // so whether to show these columns should depend on whether the data
-  // actually has them, not on a flag that's now only half-relevant.
+  // Depends on whether the data actually has these fields (several sources
+  // enrich unconditionally regardless of the fetchDetails flag) rather than
+  // on the flag itself.
   const hasDetails = data.listings.some(l => 'elevator' in l);
 
   const columns = [
