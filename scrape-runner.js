@@ -35,8 +35,14 @@ const { getBarnesConfig } = require('./source-config');
 const parseListing = require('./parse-listing');
 const { extractDetailFeatures, mergeFeature } = require('./parse-listing');
 
-const MAX_LISTINGS_BY_TYPE = { rent: 200, sale: 1000 };
-const MAX_PAGE_CLICKS_BY_TYPE = { rent: 15, sale: 50 };
+// FIX (2026-08-31): rent and sale used different, tiered caps (rent:
+// 200 listings/15 page-clicks, sale: 1000/50) based on the live listing
+// counts observed when this was first built (146 rent vs 938 sale).
+// Per explicit request, rent now gets the same exhaustive caps as sale
+// — "check every possible page" — rather than stopping early just
+// because rent's inventory happened to be smaller at verification time.
+const MAX_LISTINGS_BY_TYPE = { rent: 1000, sale: 1000 };
+const MAX_PAGE_CLICKS_BY_TYPE = { rent: 50, sale: 50 };
 const DETAIL_FETCH_CONCURRENCY = 3;
 
 async function getBrowser() {
