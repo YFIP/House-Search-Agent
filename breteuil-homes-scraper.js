@@ -112,6 +112,13 @@ function extractListings() {
       text = container.innerText || '';
       if (text.includes('€') || text.includes('£')) break;
     }
+    // BUG FIX (2026-08-31): a live run confirmed every listing on
+    // breteuilhomes.com/louer is currently stamped "LOUÉ" (already
+    // rented) — this filter was entirely missing before, so all
+    // reported listings were likely stale. Same check as Luxe Prestige
+    // Immo / Palais Royal Immobilier.
+    const lower = text.toLowerCase();
+    if (lower.includes('lou\u00e9') || lower.includes('loue') || lower.includes('vendu')) continue;
     // Only keep € listings (Paris / Ouest Parisien) — £ listings are
     // London and get excluded here, no separate location filter needed.
     if (text.includes('€')) results.push({ url: href, rawText: text.slice(0, 600) });
