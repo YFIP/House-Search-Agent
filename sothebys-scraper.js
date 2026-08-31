@@ -3,22 +3,24 @@
 // NEW FILE. Propriétés Parisiennes Sotheby's International Realty — 4
 // Paris offices (6th, 7th, 8th, 9th arrondissements).
 //
-// VERIFIED LIVE (2026-08-30):
+// VERIFIED LIVE (2026-08-30, re-checked 2026-08-31 after a live run
+// returned 0 listings):
 //   - Rent (French): https://www.proprietesparisiennes-sothebysrealty.com/fr/location-appartement-luxe-paris/&new_research=1
-//     (confirmed via its English mirror — 14 listings, all visible in
-//     the initial page load).
+//     — the odd "&new_research=1" (no leading "?") is genuinely the
+//     site's real URL scheme, not a mistake on our part — confirmed via
+//     Google's own index of the site using this exact pattern on
+//     multiple pages. So the URL is not the bug.
 //   - Sale (French): https://www.proprietesparisiennes-sothebysrealty.com/fr/vente-appartement-luxe-paris/&new_research=1
-//     (French equivalent of the confirmed English
-//     /luxury-property-apartment-for-sale-paris/ URL — not independently
-//     verified).
 //   - Listing link pattern: a[href*="/paris-real-estate/ref-"] — e.g.
 //     /en/paris-real-estate/ref-pp2-3594/rental-apartment-paris-8-rooms-...
-//     — very distinctive.
-//   - IMPORTANT: pagination is a "Load more properties" control, which
-//     reads as a JS-driven action rather than a confirmed URL-based
-//     page parameter. A `?page=N` fallback is probed defensively, but
-//     if that assumption is wrong this safely degrades to the ~14
-//     listings visible on initial load rather than erroring.
+//   - BUG FIX: added a cookie-consent-accept step (this scraper never
+//     had one) and bumped waitForSelector's timeout (10s -> 20s), plus
+//     diagnostic logging when the selector never appears — see the
+//     matching note in helix-immobilier-scraper.js for the reasoning.
+//     Root cause is still not confirmed (bot-blocking on the CI runner's
+//     IP vs. a consent gate vs. slow client-side rendering are all
+//     plausible for a page that demonstrably has real content) — the
+//     diagnostic log is there so the next run tells us which.
 //   - Price format: "35,000 € / month" (English, comma thousands
 //     separator) — parse-listing.js's SEP class already includes comma
 //     as a valid separator, so this (and the French "35 000 € / mois"
@@ -131,10 +133,27 @@ async function scrapeSothebys(searchType = 'rent') {
       console.log(`[Sotheby's] Navigating to ${url}`);
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
 
+      // Accept cookie banner if present — this scraper never had this
+      // step before. Harmless if there's no banner.
+      await page.evaluate(() => {
+        Array.from(document.querySelectorAll('button')).forEach(btn => {
+          const t = (btn.innerText || '').toLowerCase();
+          if (t.includes('accepter') || t.includes('autoriser') || t.includes('tout accepter') || t.includes('accept')) btn.click();
+        });
+      }).catch(() => {});
+      await new Promise(r => setTimeout(r, 1500));
+
       try {
-        await page.waitForSelector(LISTING_SELECTOR, { timeout: 10000 });
+        await page.waitForSelector(LISTING_SELECTOR, { timeout: 20000 });
       } catch (e) {
-        console.log(`[Sotheby's] No listings found on page ${pageNum} — assuming end of results.`);
+        // DIAGNOSTIC (2026-08-31): see helix-immobilier-scraper.js for
+        // why this exists — tells us next run whether this is a
+        // bot-block or something else.
+        const diag = await page.evaluate(() => ({
+          title: document.title,
+          bodyLength: (document.body && document.body.innerText || '').length
+        })).catch(() => ({ title: '(eval failed)', bodyLength: -1 }));
+        console.log(`[Sotheby's] No listings found on page ${pageNum} — assuming end of results. DIAG: title="${diag.title}" bodyTextLength=${diag.bodyLength}`);
         await page.close();
         break;
       }
