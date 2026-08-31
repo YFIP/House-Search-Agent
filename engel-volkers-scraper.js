@@ -3,23 +3,28 @@
 // NEW FILE. Engel & Völkers — international luxury franchise, several
 // Paris shops (Le Marais, Champ de Mars, Passy, Faubourg Saint-Honoré).
 //
-// VERIFIED LIVE (2026-08-30):
-//   - Rent: https://www.engelvoelkers.com/fr/fr/properties/res/rent/real-estate/ile-de-france/paris
-//     (confirmed via its English-language mirror at the same path with
-//     /en/ instead of /fr/ as the second segment — 52 rent listings
-//     across 2 pages; the French-language version itself wasn't
-//     independently fetched, but follows the site's confirmed
-//     /{country}/{language}/... URL pattern).
-//   - Sale: https://www.engelvoelkers.com/fr/fr/properties/res/sale/real-estate/ile-de-france/paris
-//     (same pattern, rent->sale swap — not independently verified).
+// VERIFIED LIVE (2026-08-30, URL corrected 2026-08-31 after a live run
+// returned 0 listings):
+//   - BUG FOUND: the original URL was
+//     /fr/fr/properties/res/rent/real-estate/ile-de-france/paris —
+//     built by assuming a language-code swap (en->fr) keeps the same
+//     English path segments. It doesn't. The site requires *translated*
+//     path segments for French: propriete/res/vendre/immobilier
+//     (confirmed live: /fr/fr/propriete/res/vendre/immobilier/ile-de-france
+//     returns 485 results). The old URL 404s/redirects, so
+//     waitForSelector always timed out -> 0 listings, every run.
+//   - FIX: switched to the CONFIRMED-WORKING English-content URL under
+//     the France site instead — /fr/en/properties/res/{rent,sale}/real-estate/ile-de-france/paris
+//     — this is the exact URL originally verified live with the
+//     a[href*="/exposes/"] selector, just with the language segment
+//     corrected from /fr/fr/ to /fr/en/.
+//   - Sale: https://www.engelvoelkers.com/fr/en/properties/res/sale/real-estate/ile-de-france/paris
 //   - Listing link pattern: a[href*="/exposes/"] — e.g.
 //     /fr/en/exposes/a5807bf0-42a1-553d-9d39-33712367c712 — a UUID-based
 //     path, very distinct, no risk of matching nav links.
-//   - Price format: "Total rent\n€5,500" (English) — the French version
-//     is expected to show "Loyer\n5 500 €" or similar; parse-listing.js's
-//     generic saleAfter/saleBefore price regex only needs a number
-//     immediately before "€" (no "/mois" required), so either format
-//     should extract a price even without exact wording knowledge.
+//   - Price format: "Total rent\n€5,500" — parse-listing.js's generic
+//     saleAfter/saleBefore price regex only needs a number immediately
+//     before "€" (no "/mois" required), so this extracts correctly.
 //   - Pagination showed "Next page"/"1"/"2" controls but no visible raw
 //     href in the fetched markup (likely a Next.js app) — probing a
 //     `?page=N` fallback defensively; degrades to page-1-only if wrong.
@@ -27,8 +32,8 @@
 const parseListing = require('./parse-listing');
 const { extractDetailFeatures, mergeFeature } = require('./parse-listing');
 
-const RENT_URL = 'https://www.engelvoelkers.com/fr/fr/properties/res/rent/real-estate/ile-de-france/paris';
-const SALE_URL = 'https://www.engelvoelkers.com/fr/fr/properties/res/sale/real-estate/ile-de-france/paris';
+const RENT_URL = 'https://www.engelvoelkers.com/fr/en/properties/res/rent/real-estate/ile-de-france/paris';
+const SALE_URL = 'https://www.engelvoelkers.com/fr/en/properties/res/sale/real-estate/ile-de-france/paris';
 const LISTING_SELECTOR = 'a[href*="/exposes/"]';
 const MAX_PAGES = 8; // safety cap; only 2 rent pages actually observed
 const DETAIL_FETCH_CONCURRENCY = 2;
