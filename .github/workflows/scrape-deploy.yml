@@ -61,11 +61,19 @@ jobs:
   # that furnished status only exists on Junot's detail pages, not the
   # summary card), covering ~50 locations with up to 849 real sale
   # listings. See scrape-junot / scrape-junot-sale below.
+  # FIX (2026-08-31): timeout-minutes bumped 15 -> 60. This job started
+  # at 3 sources (Barnes-Suburbs, Book-a-Flat, Perenium) with a 15-minute
+  # budget that fit fine. It now runs 21 sources (20 new agencies added
+  # this session), each with its own detail-page enrichment pass — the
+  # sale run was confirmed CANCELLED by GitHub's own timeout enforcement
+  # mid-way through Quod et Associés (live log: "Error: The operation
+  # was canceled." right after 15m). Rent happened to just barely finish
+  # under 15m, but that was luck, not headroom.
   scrape-main:
     needs: check-schedule
     if: needs.check-schedule.outputs.should_run == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -86,7 +94,7 @@ jobs:
     needs: check-schedule
     if: needs.check-schedule.outputs.should_run == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
