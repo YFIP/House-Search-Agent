@@ -1,42 +1,36 @@
 // scrape-main-sources.js
-// Runs Barnes, Barnes-Suburbs, Book-a-Flat, and Perenium — everything
-// EXCEPT SeLoger, SeLoger-Suburbs, ParisRental, DanielFeau, Eiffel
-// Housing, AND (as of this pass) Junot, which all run as separate
-// isolated jobs — see scrape-single-seloger.js,
-// scrape-single-seloger-suburb.js, scrape-single-parisrental-page.js,
-// scrape-single-danielfeau.js, scrape-single-eiffel-housing.js, and
-// scrape-single-junot.js — to keep this shared job's runtime predictable
-// and avoid the "job timed out mid-enrichment, wrote nothing at all"
-// failure mode that hit DanielFeau and Eiffel Housing before they were
-// isolated.
+// Runs Barnes-Suburbs, Book-a-Flat, and Perenium — everything EXCEPT
+// ParisRental, DanielFeau, Eiffel Housing, Junot, and (as of this pass)
+// Barnes, which all run as separate isolated jobs — see
+// scrape-single-parisrental-page.js, scrape-single-danielfeau.js,
+// scrape-single-eiffel-housing.js, scrape-single-junot.js, and
+// scrape-single-barnes.js — to keep this shared job's runtime predictable
+// and avoid the "job timed out mid-run, wrote nothing at all" failure
+// mode that hit DanielFeau and Eiffel Housing before they were isolated.
 //
-// FIX (this pass): Junot moved out. It now does real detail-page
-// enrichment (added to recover furnished status — see
-// junot-scraper.js), covers ~50 locations with up to 849 real sale
-// listings, and was still running inside this shared 15-minute job —
-// exactly the situation that already caused DanielFeau/Eiffel Housing to
-// silently produce no output on busy runs. See scrape-single-junot.js
-// and the corresponding scrape-deploy.yml job.
-//
-// SeLoger (Paris-wide) is deliberately NOT run here or anywhere in this
-// pipeline: its own page/result cap was removed (uncapped by design),
-// which made a full run both too slow for any single job budget AND
-// almost entirely redundant — the per-arrondissement matrix already
-// covers all of Paris with its own enrichment.
+// FIX (this pass): SeLoger is gone entirely (scraper, suburb scraper,
+// arrondissement scraper, and their ~80-shard GitHub Actions matrix all
+// deleted), and that freed-up CI job-slot budget is what makes it
+// affordable to also move Barnes out to its own isolated job. Barnes'
+// live listing count (146 rent / 938 sale) plus its per-listing
+// detail-page enrichment step made it a real risk of the same
+// mid-run-timeout failure that already forced DanielFeau/Eiffel
+// Housing/Junot out of this shared job — this closes that gap rather
+// than leaving Barnes exposed to it.
 const fs = require('fs');
 const { combineAllSources } = require('./combine-sources');
 async function main() {
   const searchType = process.argv[2] === 'sale' ? 'sale' : 'rent';
   const fetchDetails = process.argv[3] === 'details';
-  console.log(`Scraping main sources for ${searchType}${fetchDetails ? ' (with detail enrichment)' : ''} (SeLoger, SeLoger-Suburbs, ParisRental, DanielFeau, Eiffel Housing, and Junot excluded — run separately)...`);
+  console.log(`Scraping main sources for ${searchType}${fetchDetails ? ' (with detail enrichment)' : ''} (Barnes, Orpi, ParisRental, DanielFeau, Eiffel Housing, and Junot excluded — run separately)...`);
   const data = await combineAllSources(searchType, {
     fetchDetails,
-    excludeSeLoger: true,
-    excludeSeLogerSuburbs: true,
+    excludeBarnes: true, // NEW — now runs in its own isolated job
+    excludeOrpi: true, // NEW — now runs in its own isolated job
     excludeParisRental: true,
     excludeDanielFeau: true,
     excludeEiffelHousing: true,
-    excludeJunot: true // NEW
+    excludeJunot: true
   });
   console.log(`\nMain sources total: ${data.totalListings}`);
   data.sourceStatus.forEach(s => console.log(`  ${s.source}: ${s.error ? 'FAILED - ' + s.error : s.found + ' listings'}`));
