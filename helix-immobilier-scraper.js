@@ -42,9 +42,23 @@ const LISTING_SELECTOR = 'a[href*="/details-"]';
 const MAX_PAGES = 10; // safety cap, well above the 4 rent pages actually observed
 const DETAIL_FETCH_CONCURRENCY = 2;
 
+// BUG FIX (2026-09-01): same root cause and fix as
+// patrimoine-ouest-parisien-scraper.js/afr-immobilier-scraper.js — live
+// evidence showed this site's listing links (/details-...) are 100%
+// present via a plain HTTP fetch, and the diagnostic logging added
+// earlier showed the page loaded with genuine content (6020 chars of
+// body text) yet the selector still matched zero elements. That
+// combination — real content present, selector genuinely correct,
+// zero matches in Puppeteer specifically — is the signature of
+// headless-browser fingerprint detection, not a content or selector
+// problem. Switched to puppeteer-extra + the stealth plugin. Dependency
+// was already installed for this job but never wired up in code
+// anywhere in this repo.
 async function getBrowser() {
-  const puppeteer = require('puppeteer');
-  return puppeteer.launch({
+  const puppeteerExtra = require('puppeteer-extra');
+  const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+  puppeteerExtra.use(StealthPlugin());
+  return puppeteerExtra.launch({
     headless: true,
     defaultViewport: { width: 1920, height: 1080 },
     args: ['--disable-dev-shm-usage', '--disable-gpu', '--no-sandbox', '--disable-setuid-sandbox']
