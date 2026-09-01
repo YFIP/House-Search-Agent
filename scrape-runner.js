@@ -249,62 +249,100 @@ async function enrichWithDetails(browser, listings) {
   });
 }
 
+// FIX (2026-08-31): scrapeBarnes() previously scraped ONE aggregate URL
+// (.../france/paris.html) using its "Load more" AJAX pagination alone.
+// Confirmed live this was badly under-counting: the aggregate page
+// topped out around 162 rent listings, while Barnes' own dedicated
+// per-arrondissement pages show real counts that don't add up anywhere
+// close to that (16th ème alone: 49; 7th ème alone: 21 — and there are
+// 20 arrondissements). Whether the aggregate page's AJAX endpoint has
+// a server-side cap or our own pagination loop was timing out on a
+// later batch isn't fully diagnosable from outside — either way, the
+// per-arrondissement pages are the more reliable source of truth, so
+// scrapeBarnes() now iterates all 20 of them (1er, 2eme, ... 20eme),
+// running the SAME collectWithPagination loop on each (several
+// arrondissements — like the 16th — have enough listings to need their
+// own "Load more" clicks too), and dedupes by URL across all of them.
+const ARRONDISSEMENT_SLUGS = [
+  '1er', '2eme', '3eme', '4eme', '5eme', '6eme', '7eme', '8eme', '9eme', '10eme',
+  '11eme', '12eme', '13eme', '14eme', '15eme', '16eme', '17eme', '18eme', '19eme', '20eme'
+];
+
+function arrondissementUrl(baseUrl, slug) {
+  // baseUrl looks like .../france/paris.html -> .../france/paris-16eme.html
+  return baseUrl.replace(/paris\.html$/, `paris-${slug}.html`);
+}
+
 async function scrapeBarnes(searchType, options = {}) {
-  // FIXED: defaulted to `true` — was `false`, meaning any caller that
-  // forgot to explicitly opt in silently got zero furnished/elevator/
-  // balcony data with no signal anything was wrong. A summary-card pass
-  // (below) now always provides at least a baseline value regardless of
-  // this flag; fetchDetails additionally enriches via the detail page.
   const { fetchDetails = true } = options;
   const { key, config } = getBarnesConfig(searchType);
   let browser;
-  let page;
 
   try {
     const conn = await getBrowser();
     browser = conn.browser;
     console.log(`✅ Connected to browser (${conn.mode} mode)`);
 
-    page = await browser.newPage();
-
-    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-    await page.setDefaultNavigationTimeout(30000);
-    await page.setDefaultTimeout(30000);
-
-    console.log(`[${key}] Navigating to ${config.url}`);
-    await page.goto(config.url, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(err => {
-      console.warn(`[${key}] Navigation warning: ${err.message}`);
-    });
-
-    await dismissCookieBanner(page);
-
-    try {
-      await page.waitForSelector(config.waitForSelector, { timeout: 15000 });
-    } catch (e) {
-      console.warn(`[${key}] Selector timeout ("${config.waitForSelector}")`);
-    }
-
-    try {
-      await page.waitForFunction(
-        () => typeof window.annonces_suivantes === 'function',
-        { timeout: 15000 }
-      );
-    } catch (e) {
-      console.warn('[Barnes] annonces_suivantes never became available on window within 15s — pagination will likely fail or fall back to a click.');
-    }
-
     const maxListings = MAX_LISTINGS_BY_TYPE[config.searchType] || 200;
     const maxPageClicks = MAX_PAGE_CLICKS_BY_TYPE[config.searchType] || 15;
 
-    const rawListings = await collectWithPagination(page, config, maxListings, maxPageClicks);
-    console.log(`[${key}] Raw extracted (pre-filter): ${rawListings.length}`);
+    const allRaw = [];
+    const seenUrls = new Set();
 
-    const parsed = rawListings.slice(0, maxListings).map(item => {
+    for (const slug of ARRONDISSEMENT_SLUGS) {
+      const url = arrondissementUrl(config.url, slug);
+      let page;
+      try {
+        page = await browser.newPage();
+        await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+        await page.setDefaultNavigationTimeout(30000);
+        await page.setDefaultTimeout(30000);
+
+        console.log(`[${key}] Navigating to ${url}`);
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(err => {
+          console.warn(`[${key}] Navigation warning (${slug}): ${err.message}`);
+        });
+
+        await dismissCookieBanner(page);
+
+        try {
+          await page.waitForSelector(config.waitForSelector, { timeout: 15000 });
+        } catch (e) {
+          console.warn(`[${key}] Selector timeout on ${slug} ("${config.waitForSelector}") — likely zero listings in this arrondissement, continuing.`);
+          await page.close();
+          continue;
+        }
+
+        try {
+          await page.waitForFunction(
+            () => typeof window.annonces_suivantes === 'function',
+            { timeout: 15000 }
+          );
+        } catch (e) {
+          console.warn(`[${key}] annonces_suivantes never became available on ${slug} within 15s — pagination will likely fail or fall back to a click.`);
+        }
+
+        const rawForArr = await collectWithPagination(page, config, maxListings, maxPageClicks);
+        let newCount = 0;
+        for (const item of rawForArr) {
+          if (seenUrls.has(item.url)) continue;
+          seenUrls.add(item.url);
+          allRaw.push(item);
+          newCount++;
+        }
+        console.log(`[${key}] ${slug}: ${rawForArr.length} on page, ${newCount} new (running total ${allRaw.length})`);
+
+        await page.close();
+      } catch (arrError) {
+        console.warn(`[${key}] Error scraping arrondissement ${slug}: ${arrError.message} — continuing with the rest.`);
+        if (page) { try { await page.close(); } catch (e) {} }
+      }
+    }
+
+    console.log(`[${key}] Raw extracted across all arrondissements (pre-filter): ${allRaw.length}`);
+
+    const parsed = allRaw.map(item => {
       const listing = parseListing(item.rawText);
-      // NEW — was completely missing before this fix. Runs on the
-      // summary-card text already fetched above (no extra network cost),
-      // giving every listing a baseline value even if the detail-page
-      // enrichment below is skipped or partially fails.
       const details = extractDetailFeatures(item.rawText);
       listing.url = item.url;
       listing.source = 'Barnes';
@@ -318,8 +356,6 @@ async function scrapeBarnes(searchType, options = {}) {
       return listing;
     });
 
-    await page.close();
-
     const finalListings = fetchDetails
       ? await enrichWithDetails(browser, parsed)
       : parsed;
@@ -331,7 +367,6 @@ async function scrapeBarnes(searchType, options = {}) {
 
   } catch (error) {
     console.error(`[Barnes] Error: ${error.message}`);
-    if (page) { try { await page.close(); } catch (e) {} }
     if (browser) {
       try {
         if (browser.disconnect) await browser.disconnect();
