@@ -25,9 +25,12 @@
 //   - Price format: "Total rent\n€5,500" — parse-listing.js's generic
 //     saleAfter/saleBefore price regex only needs a number immediately
 //     before "€" (no "/mois" required), so this extracts correctly.
-//   - Pagination showed "Next page"/"1"/"2" controls but no visible raw
-//     href in the fetched markup (likely a Next.js app) — probing a
-//     `?page=N` fallback defensively; degrades to page-1-only if wrong.
+//   - Pagination: BUG FIX (2026-08-31) — the original "?page=N" guess
+//     doesn't exist on this site; confirmed live via the page's own
+//     title tag ("65 Rent properties in Paris") while the old scraper
+//     only captured 35 (whatever fit on the initial load, no more).
+//     Replaced with a scroll-and-wait loop suited to this Next.js app's
+//     actual infinite-scroll behavior — see scrapeEngelVolkers() below.
 
 const parseListing = require('./parse-listing');
 const { extractDetailFeatures, mergeFeature } = require('./parse-listing');
@@ -35,7 +38,7 @@ const { extractDetailFeatures, mergeFeature } = require('./parse-listing');
 const RENT_URL = 'https://www.engelvoelkers.com/fr/en/properties/res/rent/real-estate/ile-de-france/paris';
 const SALE_URL = 'https://www.engelvoelkers.com/fr/en/properties/res/sale/real-estate/ile-de-france/paris';
 const LISTING_SELECTOR = 'a[href*="/exposes/"]';
-const MAX_PAGES = 8; // safety cap; only 2 rent pages actually observed
+const MAX_PAGES = 25; // safety cap on scroll rounds — raised since the real mechanism is infinite-scroll (confirmed 65 live listings), not the ~2-page pagination originally assumed
 const DETAIL_FETCH_CONCURRENCY = 2;
 
 async function getBrowser() {
@@ -128,50 +131,72 @@ async function scrapeEngelVolkers(searchType = 'rent') {
     const allListings = [];
     const seenUrls = new Set();
 
-    for (let pageNum = 1; pageNum <= MAX_PAGES; pageNum++) {
-      const page = await browser.newPage();
-      await page.setDefaultNavigationTimeout(20000);
-      const url = pageNum === 1 ? baseUrl : `${baseUrl}?page=${pageNum}`;
+    const page = await browser.newPage();
+    await page.setDefaultNavigationTimeout(20000);
 
-      console.log(`[Engel & Völkers] Navigating to ${url}`);
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+    console.log(`[Engel & Völkers] Navigating to ${baseUrl}`);
+    await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
 
-      try {
-        await page.waitForSelector(LISTING_SELECTOR, { timeout: 10000 });
-      } catch (e) {
-        console.log(`[Engel & Völkers] No listings found on page ${pageNum} — assuming end of results.`);
-        await page.close();
-        break;
-      }
+    try {
+      await page.waitForSelector(LISTING_SELECTOR, { timeout: 20000 });
+    } catch (e) {
+      console.log(`[Engel & Völkers] No listings found on initial load — bailing out.`);
+      await page.close();
+      await browser.close();
+      return { source: 'Engel & Völkers', searchType, listings: [], error: null };
+    }
 
+    // BUG FIX (2026-08-31): the previous version guessed at "?page=N"
+    // URL pagination, which does NOT exist on this site — confirmed
+    // live: the page's own title says "65 Rent properties in Paris"
+    // while the old scraper only ever captured 35 (i.e. whatever fit on
+    // the initial load). This is a Next.js app; the actual mechanism is
+    // almost certainly infinite-scroll, not a URL parameter. Replaced
+    // with a scroll-and-wait loop: scroll to the bottom, give the page
+    // time to fetch/render more results, re-extract, and stop once a
+    // scroll produces no new listings (or we hit the safety cap).
+    // scrollSeenUrls only tracks "did this scroll add anything new" to
+    // decide when to stop — the actual listings are built once, after
+    // scrolling settles, from whatever has accumulated in the DOM
+    // (infinite-scroll implementations append rather than replace).
+    const scrollSeenUrls = new Set();
+    let stableRounds = 0;
+    for (let round = 0; round < MAX_PAGES && stableRounds < 2; round++) {
       const raw = await page.evaluate(extractListings);
-      console.log(`[Engel & Völkers] Page ${pageNum}: ${raw.length} raw items`);
-
       let newCount = 0;
       for (const item of raw) {
-        if (seenUrls.has(item.url)) continue;
-        seenUrls.add(item.url);
-        const listing = parseListing(item.rawText);
-        listing.url = item.url;
-        listing.source = 'Engel & Völkers';
-        listing.searchType = searchType;
-        listing.isExactListing = true;
-        const details = extractDetailFeatures(item.rawText);
-        if (listing.elevator == null) listing.elevator = details.elevator;
-        if (listing.balcony == null) listing.balcony = details.balcony;
-        if (listing.furnished == null) listing.furnished = details.furnished;
-        if (listing.bathrooms == null) listing.bathrooms = details.bathroomsFromDetail;
-        if (listing.bedrooms == null) listing.bedrooms = details.bedroomsFromDetail;
-        allListings.push(listing);
+        if (scrollSeenUrls.has(item.url)) continue;
+        scrollSeenUrls.add(item.url);
         newCount++;
       }
-      await page.close();
+      console.log(`[Engel & Völkers] Scroll round ${round}: ${raw.length} total on page, ${newCount} new (running total ${scrollSeenUrls.size})`);
 
-      if (newCount === 0) {
-        console.log(`[Engel & Völkers] Page ${pageNum} had no new listings — stopping.`);
-        break;
-      }
+      stableRounds = newCount === 0 ? stableRounds + 1 : 0;
+
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      await new Promise(r => setTimeout(r, 2500));
     }
+
+    // Final extraction after the scroll loop settles — build the real
+    // listing objects from whatever's accumulated in the DOM.
+    const finalRaw = await page.evaluate(extractListings);
+    for (const item of finalRaw) {
+      if (seenUrls.has(item.url)) continue;
+      seenUrls.add(item.url);
+      const listing = parseListing(item.rawText);
+      listing.url = item.url;
+      listing.source = 'Engel & Völkers';
+      listing.searchType = searchType;
+      listing.isExactListing = true;
+      const details = extractDetailFeatures(item.rawText);
+      if (listing.elevator == null) listing.elevator = details.elevator;
+      if (listing.balcony == null) listing.balcony = details.balcony;
+      if (listing.furnished == null) listing.furnished = details.furnished;
+      if (listing.bathrooms == null) listing.bathrooms = details.bathroomsFromDetail;
+      if (listing.bedrooms == null) listing.bedrooms = details.bedroomsFromDetail;
+      allListings.push(listing);
+    }
+    await page.close();
 
     console.log(`[Engel & Völkers] Fetching detail pages for ${allListings.length} listings (concurrency: ${DETAIL_FETCH_CONCURRENCY})...`);
     const enrichedListings = await enrichWithDetails(browser, allListings);
