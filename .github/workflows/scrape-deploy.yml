@@ -304,11 +304,18 @@ jobs:
   # above the 15-minute shared budget it used to share with Barnes-Suburbs/
   # Book-a-Flat/Perenium, since it also does per-listing detail-page
   # enrichment (concurrency 3) over up to 938 live sale listings.
+  # FIX (2026-08-31): rewritten to scrape all 20 arrondissement pages
+  # individually (scrape-runner.js's scrapeBarnes) instead of one
+  # aggregate page whose "Load more" AJAX topped out around 162 rent
+  # listings despite Barnes' own per-arrondissement pages showing far
+  # more collectively (16th ème alone: 49). Timeouts bumped accordingly
+  # — 20x the navigation work, and likely a meaningfully larger true
+  # listing count feeding into the detail-page enrichment step after.
   scrape-barnes:
     needs: check-schedule
     if: needs.check-schedule.outputs.should_run == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -329,7 +336,7 @@ jobs:
     needs: check-schedule
     if: needs.check-schedule.outputs.should_run == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
