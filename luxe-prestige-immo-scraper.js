@@ -113,10 +113,12 @@ function extractListings(selector) {
       text = container.innerText || '';
       if (text.includes('€')) break;
     }
-    // Skip cards already marked sold/let — see header note. Checks for
-    // "vendu" and "lou" (catches loué/louée/LOUE, any case/accent).
-    const lower = text.toLowerCase();
-    if (lower.includes('vendu') || lower.includes('lou')) continue;
+    // BUG FIX (2026-08-31): the original check — includes('lou') — was
+    // a 3-letter substring match that hit almost any rental-related
+    // word ("louer", "location", "loueur"...), silently filtering out
+    // available listings, not just already-sold/let ones. Fixed with a
+    // whole-word regex: matches "loué"/"vendu" as standalone words only.
+    if (/\b(lou\u00e9|loue)(?![a-zA-Z\u00e0-\u00ff])/i.test(text) || /\bvendu(?![a-zA-Z\u00e0-\u00ff])/i.test(text)) continue;
     if (text.includes('€')) results.push({ url: href, rawText: text.slice(0, 600) });
   }
   return results;
