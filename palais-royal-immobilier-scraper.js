@@ -114,8 +114,11 @@ function extractListings() {
       text = container.innerText || '';
       if (text.includes('€')) break;
     }
-    const lower = text.toLowerCase();
-    if (lower.includes('lou\u00e9') || lower.includes('loue') || lower.includes('vendu')) continue;
+    // BUG FIX (2026-08-31): see breteuil-homes-scraper.js for the full
+    // explanation — the old substring check on "loue" also matched
+    // "louer"/"location" (ordinary rental vocabulary), wrongly
+    // filtering out available listings. Fixed with a whole-word regex.
+    if (/\b(lou\u00e9|loue)(?![a-zA-Z\u00e0-\u00ff])/i.test(text) || /\bvendu(?![a-zA-Z\u00e0-\u00ff])/i.test(text)) continue;
     if (text.includes('€')) results.push({ url: href, rawText: text.slice(0, 600) });
   }
   return results;
