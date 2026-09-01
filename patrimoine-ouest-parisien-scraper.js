@@ -26,9 +26,19 @@ const LISTING_SELECTOR = 'a[href*="/fiches/"]';
 const MAX_PAGES = 15; // safety cap, well above the ~2-3 pages actually observed
 const DETAIL_FETCH_CONCURRENCY = 2;
 
+// BUG FIX (2026-09-01): live evidence showed this site's listing links
+// (/fiches/...) are 100% present via a plain HTTP fetch, yet Puppeteer
+// found zero — the signature of basic headless-browser fingerprint
+// detection (checking navigator.webdriver etc.), not a selector or
+// content problem. Switched to puppeteer-extra + the stealth plugin,
+// which patches these fingerprints. The dependency was already being
+// installed for this job (scrape-main) but never actually used in code
+// anywhere in this repo — confirmed by checking every other scraper.
 async function getBrowser() {
-  const puppeteer = require('puppeteer');
-  return puppeteer.launch({
+  const puppeteerExtra = require('puppeteer-extra');
+  const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+  puppeteerExtra.use(StealthPlugin());
+  return puppeteerExtra.launch({
     headless: true,
     defaultViewport: { width: 1920, height: 1080 },
     args: ['--disable-dev-shm-usage', '--disable-gpu', '--no-sandbox', '--disable-setuid-sandbox']
