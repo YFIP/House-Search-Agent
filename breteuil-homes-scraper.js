@@ -117,8 +117,17 @@ function extractListings() {
     // rented) — this filter was entirely missing before, so all
     // reported listings were likely stale. Same check as Luxe Prestige
     // Immo / Palais Royal Immobilier.
-    const lower = text.toLowerCase();
-    if (lower.includes('lou\u00e9') || lower.includes('loue') || lower.includes('vendu')) continue;
+    // BUG FIX (2026-08-31): the previous check used
+    // lower.includes('loue') — a plain substring match. "loue" is also
+    // the first 4 letters of "louer" ("to rent"/"for rent"), which
+    // appears constantly in ordinary listing text ("Appartement à
+    // louer..."). That was silently filtering out AVAILABLE listings,
+    // not just already-rented ones — confirmed live: this source went
+    // from 6 listings down to 1 after the filter was added. Fixed with
+    // a whole-word regex: matches "loué"/"LOUÉ" (the status stamp,
+    // accented) or an accent-stripped "loue" as a standalone word, but
+    // NOT as the start of "louer"/"location"/etc.
+    if (/\b(lou\u00e9|loue)(?![a-zA-Z\u00e0-\u00ff])/i.test(text) || /\bvendu(?![a-zA-Z\u00e0-\u00ff])/i.test(text)) continue;
     // Only keep € listings (Paris / Ouest Parisien) — £ listings are
     // London and get excluded here, no separate location filter needed.
     if (text.includes('€')) results.push({ url: href, rawText: text.slice(0, 600) });
