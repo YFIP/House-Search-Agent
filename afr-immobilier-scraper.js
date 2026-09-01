@@ -26,9 +26,18 @@ const LISTING_SELECTOR = 'a[href*="/fiches/"]';
 const MAX_PAGES = 15; // safety cap, well above the ~2-3 pages actually observed
 const DETAIL_FETCH_CONCURRENCY = 2;
 
+// BUG FIX (2026-09-01): same root cause and fix as
+// patrimoine-ouest-parisien-scraper.js — live evidence showed this
+// site's listing links are 100% present via a plain HTTP fetch, yet
+// Puppeteer found zero. Switched to puppeteer-extra + the stealth
+// plugin to patch headless-browser fingerprints (navigator.webdriver
+// etc). Dependency was already installed for this job but never wired
+// up in code anywhere in this repo.
 async function getBrowser() {
-  const puppeteer = require('puppeteer');
-  return puppeteer.launch({
+  const puppeteerExtra = require('puppeteer-extra');
+  const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+  puppeteerExtra.use(StealthPlugin());
+  return puppeteerExtra.launch({
     headless: true,
     defaultViewport: { width: 1920, height: 1080 },
     args: ['--disable-dev-shm-usage', '--disable-gpu', '--no-sandbox', '--disable-setuid-sandbox']
