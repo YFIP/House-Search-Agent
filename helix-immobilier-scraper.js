@@ -168,17 +168,32 @@ async function scrapeHelixImmobilier(searchType = 'rent') {
       try {
         await page.waitForSelector(LISTING_SELECTOR, { timeout: 20000 });
       } catch (e) {
-        // DIAGNOSTIC (2026-08-31, extended 2026-09-02): stealth plugin
-        // was added but this source is STILL returning 0 — logging the
-        // actual /details- link count now too, so we can tell apart
-        // "page is genuinely blank/blocked" from "page has content but
-        // the links just aren't there for some other reason."
-        const diag = await page.evaluate(() => ({
-          title: document.title,
-          bodyLength: (document.body && document.body.innerText || '').length,
-          detailsLinkCount: document.querySelectorAll('a[href*="/details-"]').length
-        })).catch(() => ({ title: '(eval failed)', bodyLength: -1, detailsLinkCount: -1 }));
-        console.log(`[Helix Immobilier] No listings found on page ${pageNum} — assuming end of results. DIAG: title="${diag.title}" bodyTextLength=${diag.bodyLength} detailsLinkCount=${diag.detailsLinkCount}`);
+        // DIAGNOSTIC (round 3, 2026-09-02): stealth + real content
+        // confirmed (title correct, bodyTextLength ~4700 — substantial,
+        // not a blank/blocked page) but STILL zero /details- links.
+        // That combination doesn't fit simple bot-blocking. Logging the
+        // actual body text snippet and a sample of every anchor href on
+        // the page now, so we can literally read what the page is
+        // showing instead of inferring from a length number — this
+        // will tell us whether it's a "no results"/placeholder page
+        // served to automated browsers, a slow AJAX call that hasn't
+        // finished, or something else.
+        const diag = await page.evaluate(() => {
+          const allHrefs = Array.from(document.querySelectorAll('a[href]'))
+            .map(a => a.getAttribute('href'))
+            .filter(Boolean);
+          return {
+            title: document.title,
+            bodyLength: (document.body && document.body.innerText || '').length,
+            detailsLinkCount: document.querySelectorAll('a[href*="/details-"]').length,
+            totalLinkCount: allHrefs.length,
+            sampleHrefs: allHrefs.slice(0, 25),
+            bodySnippet: (document.body && document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 800)
+          };
+        }).catch(() => ({ title: '(eval failed)', bodyLength: -1, detailsLinkCount: -1, totalLinkCount: -1, sampleHrefs: [], bodySnippet: '' }));
+        console.log(`[Helix Immobilier] No listings found on page ${pageNum} — assuming end of results. DIAG: title="${diag.title}" bodyTextLength=${diag.bodyLength} detailsLinkCount=${diag.detailsLinkCount} totalLinkCount=${diag.totalLinkCount}`);
+        console.log(`[Helix Immobilier] DIAG sampleHrefs: ${JSON.stringify(diag.sampleHrefs)}`);
+        console.log(`[Helix Immobilier] DIAG bodySnippet: ${diag.bodySnippet}`);
         await page.close();
         break;
       }
