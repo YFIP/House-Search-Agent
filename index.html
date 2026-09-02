@@ -414,7 +414,6 @@
         <th data-key="bathrooms">Bathrooms</th>
         <th data-key="sqm">m²</th>
         <th data-key="area">Area</th>
-        <th data-key="address">Address (raw)</th>
         <th data-key="elevator">Elevator</th>
         <th data-key="furnished">Furnished</th>
         <th data-key="balcony">Balcony</th>
@@ -589,7 +588,6 @@
         <td>${l.bathrooms ?? '—'}</td>
         <td>${l.sqm ?? '—'}</td>
         <td>${(l.normalizedArea && l.normalizedArea.area) || '—'}</td>
-        <td>${l.address || ''}</td>
         <td>${badgeYesNo(l.elevator)}</td>
         <td>${badgeYesNo(l.furnished)}</td>
         <td>${badgeYesNo(l.balcony)}</td>
