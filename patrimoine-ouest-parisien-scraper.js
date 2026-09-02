@@ -140,9 +140,21 @@ async function scrapePatrimoineOuestParisien(searchType = 'rent') {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
 
       try {
-        await page.waitForSelector(LISTING_SELECTOR, { timeout: 10000 });
+        await page.waitForSelector(LISTING_SELECTOR, { timeout: 20000 });
       } catch (e) {
-        console.log(`[Patrimoine Ouest Parisien] No listings found on page ${pageNum} — assuming end of results.`);
+        // DIAGNOSTIC (2026-09-02): stealth plugin was added but this
+        // source is STILL returning 0 — a genuinely different failure
+        // mode than AFR Immobilier (same platform, same code shape,
+        // fixed by stealth alone). Logging title + body length so the
+        // next run tells us whether this is a bot-block (near-empty
+        // page) or something else (real content, selector still not
+        // matching) rather than guessing again.
+        const diag = await page.evaluate(() => ({
+          title: document.title,
+          bodyLength: (document.body && document.body.innerText || '').length,
+          fichesLinkCount: document.querySelectorAll('a[href*="/fiches/"]').length
+        })).catch(() => ({ title: '(eval failed)', bodyLength: -1, fichesLinkCount: -1 }));
+        console.log(`[Patrimoine Ouest Parisien] No listings found on page ${pageNum} — assuming end of results. DIAG: title="${diag.title}" bodyTextLength=${diag.bodyLength} fichesLinkCount=${diag.fichesLinkCount}`);
         await page.close();
         break;
       }
