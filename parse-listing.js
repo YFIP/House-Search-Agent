@@ -79,7 +79,18 @@ function parseListing(rawText) {
   // ---- ADDRESS / ARRONDISSEMENT --------------------------------------------
   let address = '';
   const ARR_NUM = '(?:[1-9]|1[0-9]|20)';
-  const parisMatch = text.match(new RegExp(`Paris\\s*${ARR_NUM}\\s*(?:er|ème|eme|e|th|st|nd|rd)\\b|Paris\\s*${ARR_NUM}(?!\\s*\\d)\\b`, 'i'));
+  // BUG FIX (2026-09-02): (?!\s*\d) treats a newline as whitespace, so
+  // it looks PAST a line break into the next line to check for a
+  // following digit. This silently rejected valid arrondissement
+  // matches whenever the very next line happened to start with a
+  // number — e.g. "PARIS 17\n13.07 m²" was rejected because "13"
+  // starts the next line, even though "17" is clearly its own number
+  // terminated by the line break. Confirmed live: this was the root
+  // cause of garbage addresses/areas for Patrimoine Immo, Dynagest, and
+  // others whose cards put the arrondissement on its own line right
+  // before the specs line. Restricted the lookahead to [ \t]* (same
+  // line only) so a newline correctly terminates the number.
+  const parisMatch = text.match(new RegExp(`Paris\\s*${ARR_NUM}\\s*(?:er|ème|eme|e|th|st|nd|rd)\\b|Paris\\s*${ARR_NUM}(?![ \\t]*\\d)\\b`, 'i'));
   if (parisMatch) {
     address = parisMatch[0].trim();
   } else {
@@ -94,11 +105,37 @@ function parseListing(rawText) {
   }
   if (!address) {
     const badgeWords = /^(exclusivit[ée]|nouveau|appartement|maison|studio|duplex|loft|new|price on request|furnished apartment for rent|unfurnished apartment for rent)$/i;
-    const priceOnlyLine = /^\d[\d\s.,]*\s*€\s*(\/\s*(mois|month))?\s*(charges? (comprises?|incluses?)|hors charges)?\s*$/i;
+    // BUG FIX (2026-09-02): this filter only recognized "X €/mois"
+    // (with a slash). Sources that write "X € par mois" instead (Orpi,
+    // Breteuil Homes, others) — no slash — slipped straight through
+    // this filter and got picked as the "address", which is exactly
+    // why Orpi rows showed a repeated price string as both area and
+    // address in the live dashboard.
+    const priceOnlyLine = /^\d[\d\s.,]*\s*€\s*((\/|par)\s*(mois|month))?\s*(charges? (comprises?|incluses?)|hors charges)?\s*$/i;
     const refNumberLine = /^ref\.?\s*\d+$/i;
     const photoCounterLine = /^\d+\s*\/\s*\d+$/;
+    // NEW (2026-09-02): defensive filter for specs-only lines like
+    // "13.07 m² | 1 pièce" or "4 Bedrooms · 243 m² · 4 bathrooms" —
+    // never explicitly excluded before, so if the arrondissement match
+    // above ever fails, this stops a specs line from being mistaken for
+    // the address. Strips every recognized spec token/number/separator
+    // and checks whether anything real is left, rather than a rigid
+    // regex shape (which missed "pièce(s)" parens, bullet separators,
+    // etc. in testing).
+    function isSpecsOnlyLine(line) {
+      const stripped = line
+        .replace(/m²|m2|sqm|sq\s*ft/gi, ' ')
+        .replace(/pi[eè]ces?(\(s\))?/gi, ' ')
+        .replace(/chambres?/gi, ' ')
+        .replace(/bedrooms?/gi, ' ')
+        .replace(/bathrooms?/gi, ' ')
+        .replace(/salles?\s*de\s*bains?/gi, ' ')
+        .replace(/[\d.,|·/\-()\s]+/g, ' ')
+        .trim();
+      return stripped.length === 0;
+    }
     const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 5 && !photoCounterLine.test(l));
-    const usableLine = lines.find(l => !badgeWords.test(l) && !priceOnlyLine.test(l) && !refNumberLine.test(l));
+    const usableLine = lines.find(l => !badgeWords.test(l) && !priceOnlyLine.test(l) && !refNumberLine.test(l) && !isSpecsOnlyLine(l));
     address = usableLine || lines[0] || '';
   }
 
