@@ -168,15 +168,17 @@ async function scrapeHelixImmobilier(searchType = 'rent') {
       try {
         await page.waitForSelector(LISTING_SELECTOR, { timeout: 20000 });
       } catch (e) {
-        // DIAGNOSTIC (2026-08-31): log what's actually on the page when
-        // the selector never appears, so the next run's log tells us
-        // whether this is a bot-block (near-empty body) or something
-        // else entirely (real content, still no match).
+        // DIAGNOSTIC (2026-08-31, extended 2026-09-02): stealth plugin
+        // was added but this source is STILL returning 0 — logging the
+        // actual /details- link count now too, so we can tell apart
+        // "page is genuinely blank/blocked" from "page has content but
+        // the links just aren't there for some other reason."
         const diag = await page.evaluate(() => ({
           title: document.title,
-          bodyLength: (document.body && document.body.innerText || '').length
-        })).catch(() => ({ title: '(eval failed)', bodyLength: -1 }));
-        console.log(`[Helix Immobilier] No listings found on page ${pageNum} — assuming end of results. DIAG: title="${diag.title}" bodyTextLength=${diag.bodyLength}`);
+          bodyLength: (document.body && document.body.innerText || '').length,
+          detailsLinkCount: document.querySelectorAll('a[href*="/details-"]').length
+        })).catch(() => ({ title: '(eval failed)', bodyLength: -1, detailsLinkCount: -1 }));
+        console.log(`[Helix Immobilier] No listings found on page ${pageNum} — assuming end of results. DIAG: title="${diag.title}" bodyTextLength=${diag.bodyLength} detailsLinkCount=${diag.detailsLinkCount}`);
         await page.close();
         break;
       }
