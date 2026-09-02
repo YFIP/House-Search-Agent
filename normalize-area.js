@@ -68,7 +68,12 @@ function normalizeArea(rawAddress) {
     // suffixed ordinal (er/ème/th) is already complete, no guard needed;
     // a bare number (Eiffel Housing's "Paris 16") needs the digit-guard
     // to avoid misreading "Paris 2 200 €" as arrondissement 2.
-    /paris\s*(\d{1,2})\s*(?:er|ème|eme|e|th|st|nd|rd)\b|paris\s*(\d{1,2})(?!\s*\d)\b/i,
+    // BUG FIX (2026-09-02): same lookahead bug as parse-listing.js —
+    // (?!\s*\d) treats a newline as whitespace and looks past a line
+    // break into the next line, wrongly rejecting valid matches when
+    // the next line happens to start with a digit. Restricted to
+    // [ \t]* (same line only).
+    /paris\s*(\d{1,2})\s*(?:er|ème|eme|e|th|st|nd|rd)\b|paris\s*(\d{1,2})(?![ \t]*\d)\b/i,
     /(\d{1,2})\s*(?:ème|eme|th|st|nd|rd)\s*(?:arrondissement|district)/i,
     /\(?\b750(\d{2})\b\)?/, // postal code fallback, e.g. "(75016)" or "75012" -> arrondissement number; 750XX is unambiguously Paris, no "Paris" word required nearby
   ];
