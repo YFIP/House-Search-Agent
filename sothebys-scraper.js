@@ -35,9 +35,15 @@ const LISTING_SELECTOR = 'a[href*="/paris-real-estate/ref-"]';
 const MAX_PAGES = 6; // safety cap; "Load more" is likely JS-driven, not URL-based
 const DETAIL_FETCH_CONCURRENCY = 2;
 
+// BUG FIX (2026-09-02): switched to puppeteer-extra + stealth plugin,
+// same fix that took AFR Immobilier from 0 to 18 listings. This
+// scraper never got that fix applied — still plain puppeteer. The
+// dependency is already installed for this job (scrape-main).
 async function getBrowser() {
-  const puppeteer = require('puppeteer');
-  return puppeteer.launch({
+  const puppeteerExtra = require('puppeteer-extra');
+  const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+  puppeteerExtra.use(StealthPlugin());
+  return puppeteerExtra.launch({
     headless: true,
     defaultViewport: { width: 1920, height: 1080 },
     args: ['--disable-dev-shm-usage', '--disable-gpu', '--no-sandbox', '--disable-setuid-sandbox']
