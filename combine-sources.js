@@ -64,19 +64,74 @@ function withTimeout(promise, ms, label) {
 
 const PER_SOURCE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
+// FIX (2026-09-03): a source that came back with 0 listings (rate
+// limiting, a temporary defensive trigger, a transient site issue) had
+// exactly one shot per day — if that one attempt got blocked, the whole
+// day's data for that source was gone, even though the SAME source
+// worked fine the day before and after with zero code changes. Live
+// evidence: Patrimoine Ouest Parisien and AFR Immobilier went 59/31
+// listings -> 0/0 -> (confirmed unchanged code) purely run-to-run.
+// That's the signature of a transient block, not a permanent one — and
+// transient blocks are exactly what a retry with backoff can recover
+// from. Each attempt gets a genuinely fresh browser/session (every
+// scraper launches its own browser internally), which won't help
+// against a hard IP ban, but will against session- or request-pattern
+// based rate limiting, which is far more common for small sites without
+// enterprise-grade bot infrastructure.
+//
+// This does NOT guarantee every source succeeds every time — no
+// scraper honestly can, against a site that's actively trying to block
+// automated traffic. It meaningfully raises the odds of recovering from
+// the kind of here-today-gone-tomorrow flakiness we've actually seen,
+// without pretending to solve a problem that isn't fully solvable.
+const MAX_ATTEMPTS_ON_ZERO = 3; // 1 initial + 2 retries
+const RETRY_BASE_DELAY_MS = 20 * 1000; // 20s, 40s (with jitter) between attempts
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function runSource(label, promiseFactory, results, sourceStatus) {
-  try {
-    console.log(`\n=== Scraping ${label} ===`);
-    const result = await withTimeout(promiseFactory(), PER_SOURCE_TIMEOUT_MS, `${label} scrape`);
-    if (result.error) {
-      sourceStatus.push({ source: label, found: 0, error: result.error });
-    } else {
-      results.push(...result.listings);
-      sourceStatus.push({ source: label, found: result.listings.length, error: null });
+  let lastResult = null;
+  let lastError = null;
+  let attemptsUsed = 0;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS_ON_ZERO; attempt++) {
+    attemptsUsed = attempt;
+    try {
+      const attemptLabel = attempt === 1 ? '' : ` (retry ${attempt - 1}/${MAX_ATTEMPTS_ON_ZERO - 1})`;
+      console.log(`\n=== Scraping ${label}${attemptLabel} ===`);
+      const result = await withTimeout(promiseFactory(), PER_SOURCE_TIMEOUT_MS, `${label} scrape`);
+      lastResult = result;
+      lastError = null;
+
+      if (result.error) {
+        console.warn(`${label}: attempt ${attempt} returned an error: ${result.error}`);
+      } else if (result.listings.length === 0 && attempt < MAX_ATTEMPTS_ON_ZERO) {
+        console.warn(`${label}: attempt ${attempt} returned 0 listings — could be a transient block or genuinely zero today. Retrying after a delay before assuming it's real.`);
+      } else {
+        // Either got real listings, or this was the last allowed
+        // attempt (0 listings with no more retries left) — done either way.
+        break;
+      }
+    } catch (error) {
+      lastError = error;
+      console.error(`${label}: attempt ${attempt} threw unexpectedly (or hung and was timed out): ${error.message}`);
     }
-  } catch (error) {
-    console.error(`${label} threw unexpectedly (or hung and was timed out):`, error.message);
-    sourceStatus.push({ source: label, found: 0, error: error.message });
+
+    if (attempt < MAX_ATTEMPTS_ON_ZERO) {
+      const delay = RETRY_BASE_DELAY_MS * attempt + Math.floor(Math.random() * 5000);
+      console.log(`${label}: waiting ${(delay / 1000).toFixed(0)}s before retrying...`);
+      await sleep(delay);
+    }
+  }
+
+  if (lastResult && !lastResult.error) {
+    results.push(...lastResult.listings);
+    sourceStatus.push({ source: label, found: lastResult.listings.length, error: null, attempts: attemptsUsed });
+  } else {
+    const errorMsg = (lastResult && lastResult.error) || (lastError && lastError.message) || 'Unknown error after retries';
+    sourceStatus.push({ source: label, found: 0, error: errorMsg, attempts: attemptsUsed });
   }
 }
 
