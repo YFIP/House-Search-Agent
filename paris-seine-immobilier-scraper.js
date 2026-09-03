@@ -28,9 +28,19 @@ const LISTING_SELECTOR = 'a[href*="/fiches/"]';
 const MAX_PAGES = 15; // safety cap; unverified pagination pattern (see header note)
 const DETAIL_FETCH_CONCURRENCY = 2;
 
+// BUG FIX (2026-09-02): switched to puppeteer-extra + stealth plugin —
+// this was applied to Patrimoine Ouest Parisien and AFR Immobilier
+// (same Orisha platform) but never to this file, an oversight. Worth
+// noting: those two later regressed from working (59/31 listings) back
+// to 0 with ZERO code changes in between — meaning something changed
+// on the site/platform side, not in our code. This fix may or may not
+// hold up for the same reason; it's not a guarantee against a platform
+// that's actively adapting its defenses.
 async function getBrowser() {
-  const puppeteer = require('puppeteer');
-  return puppeteer.launch({
+  const puppeteerExtra = require('puppeteer-extra');
+  const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+  puppeteerExtra.use(StealthPlugin());
+  return puppeteerExtra.launch({
     headless: true,
     defaultViewport: { width: 1920, height: 1080 },
     args: ['--disable-dev-shm-usage', '--disable-gpu', '--no-sandbox', '--disable-setuid-sandbox']
