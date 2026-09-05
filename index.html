@@ -6,6 +6,7 @@
 <title>Your Friend in Paris — Listings</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" integrity="sha512-sA+zWATbFveLLNqWO2gtiw3HL/lh1giY/Inf1BJ0z14BStrEcC6bhqk2wippBb/soLewhpXBnEqU4pJPU5UYD9tw==" crossorigin="">
 <style>
   :root {
     /* Real brand palette (YFP Brand Guide v1) */
@@ -324,14 +325,280 @@
     table { font-size: 0.8rem; }
     thead th, tbody td { padding: 0.5rem 0.5rem; }
   }
+
+  /* ---- Password gate -------------------------------------------------
+     NOTE: this is a basic client-side deterrent, NOT real security. The
+     password check runs entirely in this file, which is public — anyone
+     who views source can read it. Appropriate for keeping casual/random
+     visitors out of a link shared with family, not for protecting truly
+     sensitive data. Change PASSWORD_GATE_VALUE below to your own value. */
+  #password-gate {
+    position: fixed;
+    inset: 0;
+    background: var(--green);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 1.5rem;
+  }
+  #password-gate .box {
+    background: var(--white);
+    border-radius: 6px;
+    padding: 2.5rem 2rem;
+    max-width: 360px;
+    width: 100%;
+    text-align: center;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.25);
+  }
+  #password-gate h2 {
+    font-family: 'Fraunces', serif;
+    font-weight: 500;
+    margin: 0 0 0.3rem;
+    color: var(--ink);
+  }
+  #password-gate p { color: #6B6459; font-size: 0.85rem; margin: 0 0 1.2rem; }
+  #password-gate input {
+    width: 100%;
+    padding: 0.65rem 0.8rem;
+    font-size: 1rem;
+    border: 1px solid var(--stone-deep);
+    border-radius: 4px;
+    margin-bottom: 0.8rem;
+    text-align: center;
+  }
+  #password-gate button {
+    width: 100%;
+    padding: 0.65rem;
+    background: var(--rust);
+    color: var(--white);
+    border: none;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 0.95rem;
+    cursor: pointer;
+  }
+  #password-gate .error { color: var(--rust); font-size: 0.82rem; margin-top: 0.6rem; display: none; }
+
+  /* ---- Profiles ------------------------------------------------------ */
+  .profiles-panel {
+    background: var(--white);
+    border: 1px solid var(--stone-deep);
+    border-radius: 4px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  .profiles-panel h2 {
+    font-family: 'Fraunces', serif;
+    font-weight: 500;
+    font-size: 1.05rem;
+    margin: 0 0 0.2rem;
+  }
+  .profiles-panel .sub { font-size: 0.82rem; color: #6B6459; margin: 0 0 1rem; }
+  .profile-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    align-items: center;
+  }
+  .profile-chip {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    border: 1.5px solid var(--brass);
+    background: var(--brass-light);
+    color: var(--green-deep);
+    font-size: 0.82rem;
+    font-weight: 600;
+    padding: 0.35rem 0.5rem 0.35rem 0.85rem;
+    border-radius: 999px;
+  }
+  .profile-chip.active { background: var(--rust); border-color: var(--rust); color: var(--white); }
+  .profile-chip button {
+    border: none;
+    background: none;
+    cursor: pointer;
+    color: inherit;
+    font-size: 0.95rem;
+    line-height: 1;
+    padding: 0.1rem 0.2rem;
+    opacity: 0.75;
+  }
+  .profile-chip button:hover { opacity: 1; }
+  .profile-add-btn {
+    border: 1.5px dashed var(--stone-deep);
+    background: transparent;
+    color: #6B6459;
+    font-size: 0.82rem;
+    font-weight: 600;
+    padding: 0.35rem 0.9rem;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  .profile-add-btn:hover { border-color: var(--brass); color: var(--green-deep); }
+  .profile-hint { font-size: 0.78rem; color: #B7AE9C; margin-top: 0.5rem; }
+
+  /* Simple modal used for "new profile" and editing a profile's specs */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(38, 42, 48, 0.55);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 900;
+    padding: 1.5rem;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal-box {
+    background: var(--white);
+    border-radius: 6px;
+    padding: 1.75rem;
+    max-width: 420px;
+    width: 100%;
+    max-height: 85vh;
+    overflow-y: auto;
+  }
+  .modal-box h3 { font-family: 'Fraunces', serif; font-weight: 500; margin: 0 0 1rem; }
+  .modal-field { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.9rem; }
+  .modal-field label { font-size: 0.78rem; font-weight: 600; color: #6B6459; text-transform: uppercase; letter-spacing: 0.05em; }
+  .modal-field input, .modal-field select {
+    font-family: 'Inter', sans-serif;
+    font-size: 0.9rem;
+    padding: 0.5rem 0.65rem;
+    border: 1px solid var(--stone-deep);
+    border-radius: 3px;
+  }
+  .modal-two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; }
+  .modal-actions { display: flex; gap: 0.6rem; margin-top: 1.2rem; }
+  .modal-actions button {
+    flex: 1;
+    padding: 0.6rem;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 0.88rem;
+    cursor: pointer;
+    border: none;
+  }
+  .modal-save { background: var(--green); color: var(--white); }
+  .modal-cancel { background: var(--stone); color: var(--ink); border: 1px solid var(--stone-deep) !important; }
+
+  /* ---- Multi-select agency dropdown ----------------------------------- */
+  .multiselect { position: relative; }
+  .multiselect-toggle {
+    font-family: 'Inter', sans-serif;
+    font-size: 0.88rem;
+    padding: 0.45rem 0.6rem;
+    border: 1px solid var(--stone-deep);
+    border-radius: 3px;
+    background: var(--stone);
+    color: var(--ink);
+    cursor: pointer;
+    min-width: 160px;
+    text-align: left;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .multiselect-toggle::after { content: '▾'; color: #6B6459; }
+  .multiselect-panel {
+    display: none;
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    background: var(--white);
+    border: 1px solid var(--stone-deep);
+    border-radius: 4px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    padding: 0.6rem;
+    width: 260px;
+    max-height: 320px;
+    overflow-y: auto;
+    z-index: 50;
+  }
+  .multiselect-panel.open { display: block; }
+  .multiselect-actions { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--stone-deep); }
+  .multiselect-actions button {
+    font-size: 0.72rem;
+    border: none;
+    background: none;
+    color: var(--green);
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: underline;
+  }
+  .multiselect-option { display: flex; align-items: center; gap: 0.5rem; padding: 0.3rem 0.2rem; font-size: 0.85rem; }
+  .multiselect-option input { margin: 0; }
+  .multiselect-option label { cursor: pointer; flex: 1; }
+
+  /* ---- View toggle (Table / Map) --------------------------------------- */
+  .view-toggle { display: flex; gap: 0.4rem; margin-bottom: 1rem; }
+  .view-toggle-btn {
+    font-size: 0.82rem;
+    font-weight: 600;
+    padding: 0.45rem 1rem;
+    border: 1px solid var(--stone-deep);
+    background: var(--white);
+    color: var(--ink);
+    border-radius: 3px;
+    cursor: pointer;
+  }
+  .view-toggle-btn.active { background: var(--green); color: var(--white); border-color: var(--green); }
+
+  /* ---- Map view -------------------------------------------------------
+     Bubbles are positioned at each area's approximate centroid (see
+     AREA_COORDS), sized/labeled by matching-listing count — NOT exact
+     per-building pins. We deliberately don't keep exact street
+     addresses (see index.html's own earlier history), so a literal
+     pin-per-listing map isn't possible with the data we have; this is
+     the honest version of "a map" given that constraint. */
+  #map-container { display: none; }
+  #map-container.active { display: block; }
+  #leaflet-map {
+    width: 100%;
+    height: 560px;
+    border-radius: 4px;
+    border: 1px solid var(--stone-deep);
+    background: var(--stone);
+  }
+  .map-bubble {
+    background: var(--rust);
+    color: var(--white);
+    border: 2px solid var(--white);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Fraunces', serif;
+    font-weight: 600;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    cursor: pointer;
+  }
+  .map-bubble.empty { background: #B7AE9C; }
+  .map-popup-title { font-family: 'Fraunces', serif; font-weight: 600; margin: 0 0 0.3rem; }
+  .map-popup-line { font-size: 0.85rem; margin: 0.1rem 0; }
+  .map-hint { font-size: 0.78rem; color: #6B6459; margin: 0.6rem 0 0; }
 </style>
 </head>
 <body>
 
+<div id="password-gate">
+  <div class="box">
+    <h2>Your Friend in Paris</h2>
+    <p>This page is private. Enter the password to continue.</p>
+    <input type="password" id="password-input" placeholder="Password" autocomplete="off">
+    <button id="password-submit">Enter</button>
+    <div class="error" id="password-error">Wrong password — try again.</div>
+  </div>
+</div>
+
+<div id="page-content" style="display:none">
+
 <header>
   <div class="eyebrow">Your Friend in Paris</div>
   <h1 id="page-title">Paris &amp; Île-de-France Rentals</h1>
-  <p>Every listing pulled together from 10 agencies, refreshed automatically. Filter by arrondissement or suburb below — however each agency wrote the address, it's grouped the same way here.</p>
+  <p>Every listing pulled together from dozens of agencies, refreshed automatically. Filter by arrondissement or suburb below — however each agency wrote the address, it's grouped the same way here.</p>
   <div class="type-toggle">
     <button class="type-toggle-btn active" id="toggle-rent" data-type="rent">Rent</button>
     <button class="type-toggle-btn" id="toggle-sale" data-type="sale">Buy</button>
@@ -348,14 +615,32 @@
     <button class="clear-area" id="clear-area">Clear area filter</button>
   </div>
 
+  <div class="profiles-panel">
+    <h2>Who are we searching for?</h2>
+    <p class="sub">Save a named profile with its own price range, room count, and area preferences — switch between people and each profile's filters apply automatically. Saved on this device/browser only.</p>
+    <div class="profile-row" id="profile-row">
+      <button class="profile-add-btn" id="add-profile-btn">+ New profile</button>
+    </div>
+    <div class="profile-hint" id="profile-hint" style="display:none">Editing filters live — <button id="update-profile-btn" style="border:none;background:none;color:var(--green);font-weight:600;cursor:pointer;text-decoration:underline;padding:0;font-size:inherit;">save current filters to this profile</button></div>
+  </div>
+
   <div class="filter-bar">
     <div class="filter-field search">
       <label for="search-input">Search</label>
       <input type="text" id="search-input" placeholder="Street, neighborhood, reference…">
     </div>
     <div class="filter-field">
-      <label for="source-select">Agency</label>
-      <select id="source-select"><option value="">All</option></select>
+      <label>Agency</label>
+      <div class="multiselect">
+        <button type="button" class="multiselect-toggle" id="agency-toggle">All agencies</button>
+        <div class="multiselect-panel" id="agency-panel">
+          <div class="multiselect-actions">
+            <button type="button" id="agency-select-all">Select all</button>
+            <button type="button" id="agency-clear">Clear</button>
+          </div>
+          <div id="agency-options"></div>
+        </div>
+      </div>
     </div>
     <div class="filter-field">
       <label for="min-price">Min price (€)</label>
@@ -404,7 +689,17 @@
   </div>
 
   <div id="result-count"></div>
+  <div class="view-toggle">
+    <button class="view-toggle-btn active" id="view-table-btn">Table</button>
+    <button class="view-toggle-btn" id="view-map-btn">Map</button>
+  </div>
   <div id="loading">Loading listings…</div>
+
+  <div id="map-container">
+    <div id="leaflet-map"></div>
+    <p class="map-hint">Bubbles show how many matching listings are in each arrondissement/suburb, positioned at that area's approximate center — not exact addresses (we don't keep street-level addresses). Click a bubble to filter the table to that area.</p>
+  </div>
+
   <table id="results-table" style="display:none">
     <thead>
       <tr>
@@ -417,6 +712,7 @@
         <th data-key="elevator">Elevator</th>
         <th data-key="furnished">Furnished</th>
         <th data-key="balcony">Balcony</th>
+        <th data-key="scrapedAt">Pulled</th>
         <th>Link</th>
       </tr>
     </thead>
@@ -428,6 +724,66 @@
   </div>
 </main>
 
+<!-- New/edit profile modal -->
+<div class="modal-backdrop" id="profile-modal">
+  <div class="modal-box">
+    <h3 id="profile-modal-title">New profile</h3>
+    <div class="modal-field">
+      <label for="profile-name-input">Name</label>
+      <input type="text" id="profile-name-input" placeholder="e.g. Sarah, Mom &amp; Dad, Team NYC">
+    </div>
+    <div class="modal-two-col">
+      <div class="modal-field">
+        <label for="profile-min-price">Min price (€)</label>
+        <input type="number" id="profile-min-price" placeholder="0">
+      </div>
+      <div class="modal-field">
+        <label for="profile-max-price">Max price (€)</label>
+        <input type="number" id="profile-max-price" placeholder="No limit">
+      </div>
+    </div>
+    <div class="modal-two-col">
+      <div class="modal-field">
+        <label for="profile-bedrooms">Bedrooms</label>
+        <select id="profile-bedrooms">
+          <option value="">Any</option>
+          <option value="1">1+</option>
+          <option value="2">2+</option>
+          <option value="3">3+</option>
+          <option value="4">4+</option>
+          <option value="5">5+</option>
+        </select>
+      </div>
+      <div class="modal-field">
+        <label for="profile-bathrooms">Bathrooms</label>
+        <select id="profile-bathrooms">
+          <option value="">Any</option>
+          <option value="1">1+</option>
+          <option value="2">2+</option>
+          <option value="3">3+</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-two-col">
+      <div class="modal-field">
+        <label for="profile-min-sqm">Min m²</label>
+        <input type="number" id="profile-min-sqm" placeholder="0">
+      </div>
+      <div class="modal-field">
+        <label for="profile-max-sqm">Max m²</label>
+        <input type="number" id="profile-max-sqm" placeholder="No limit">
+      </div>
+    </div>
+    <p style="font-size:0.78rem;color:#6B6459;margin:0 0 0.5rem;">Areas and agencies: set those with the normal filters above, then create the profile — it saves whatever's currently selected there too.</p>
+    <div class="modal-actions">
+      <button class="modal-cancel" id="profile-cancel-btn">Cancel</button>
+      <button class="modal-save" id="profile-save-btn">Save profile</button>
+    </div>
+  </div>
+</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" integrity="sha512-BB3hKbKWOc9Ez/TAwyWxNXeoV9c1v6FIeYiBieIWkpLjauysF18NzgR1MBNBXf8/KLDpUC/95lu4jxYnp1Rrfo==" crossorigin=""></script>
 <script>
 // ---- Normalization logic (inlined from normalize-area.js) ------------
 // Kept in sync with the server-side version used when generating
@@ -441,8 +797,36 @@
   const state = {
     listings: [],
     listingType: 'rent',
-    filters: { areas: new Set(), source: '', minPrice: null, maxPrice: null, bedrooms: null, bathrooms: null, minSqm: null, maxSqm: null, elevator: false, furnished: false, balcony: false, search: '' },
+    view: 'table',
+    activeProfileId: null,
+    filters: { areas: new Set(), sources: new Set(), minPrice: null, maxPrice: null, bedrooms: null, bathrooms: null, minSqm: null, maxSqm: null, elevator: false, furnished: false, balcony: false, search: '' },
     sort: { key: 'price', dir: 'asc' }
+  };
+
+  // Approximate centroids for each Paris arrondissement and the suburb
+  // towns we track (see normalize-area.js's SUBURB_ALIASES) — used ONLY
+  // for the map view's bubble positions. Deliberately area-level, not
+  // per-listing: we don't keep exact street addresses (a prior
+  // simplification, see index.html history), so a pin-per-building map
+  // isn't possible with the data we actually have. These are standard,
+  // well-known town/arrondissement center coordinates, not computed
+  // from listing data.
+  const AREA_COORDS = {
+    'Paris 1er': [48.8607, 2.3358], 'Paris 2e': [48.8686, 2.3410], 'Paris 3e': [48.8630, 2.3620],
+    'Paris 4e': [48.8544, 2.3570], 'Paris 5e': [48.8448, 2.3471], 'Paris 6e': [48.8496, 2.3320],
+    'Paris 7e': [48.8560, 2.3122], 'Paris 8e': [48.8718, 2.3075], 'Paris 9e': [48.8767, 2.3372],
+    'Paris 10e': [48.8760, 2.3600], 'Paris 11e': [48.8590, 2.3800], 'Paris 12e': [48.8400, 2.3900],
+    'Paris 13e': [48.8280, 2.3620], 'Paris 14e': [48.8330, 2.3260], 'Paris 15e': [48.8420, 2.2970],
+    'Paris 16e': [48.8600, 2.2650], 'Paris 17e': [48.8870, 2.3070], 'Paris 18e': [48.8920, 2.3450],
+    'Paris 19e': [48.8870, 2.3820], 'Paris 20e': [48.8650, 2.3980],
+    'Neuilly-sur-Seine': [48.8846, 2.2698], 'Boulogne-Billancourt': [48.8352, 2.2410],
+    'Levallois-Perret': [48.8935, 2.2880], 'Rueil-Malmaison': [48.8780, 2.1800],
+    'Suresnes': [48.8710, 2.2280], 'Puteaux': [48.8840, 2.2390], 'Saint-Cloud': [48.8420, 2.2100],
+    'Saint-Germain-en-Laye': [48.8980, 2.0930], 'Le Vésinet': [48.8920, 2.1330],
+    'Vaucresson': [48.8420, 2.1580], 'Garches': [48.8420, 2.1880], 'Marnes-la-Coquette': [48.8330, 2.1720],
+    "Ville-d'Avray": [48.8290, 2.1900], 'Versailles': [48.8049, 2.1204], 'Courbevoie': [48.8970, 2.2560],
+    'Issy-les-Moulineaux': [48.8240, 2.2730], 'Colombes': [48.9230, 2.2540], 'Nanterre': [48.8920, 2.2070],
+    'Chatou': [48.8850, 2.1570], 'Croissy-sur-Seine': [48.8790, 2.1330], 'La Celle-Saint-Cloud': [48.8540, 2.1420]
   };
 
   // Rough escargot-spiral coordinates (percent of container), evoking
@@ -503,13 +887,27 @@
 
   function populateSourceOptions() {
     const sources = [...new Set(state.listings.map(l => l.source))].sort();
-    const select = document.getElementById('source-select');
+    const optionsWrap = document.getElementById('agency-options');
+    optionsWrap.innerHTML = '';
     sources.forEach(s => {
-      const opt = document.createElement('option');
-      opt.value = s;
-      opt.textContent = s;
-      select.appendChild(opt);
+      const id = 'agency-opt-' + s.replace(/[^a-zA-Z0-9]/g, '');
+      const row = document.createElement('div');
+      row.className = 'multiselect-option';
+      row.innerHTML = `<input type="checkbox" id="${id}" value="${s}"><label for="${id}">${s}</label>`;
+      row.querySelector('input').addEventListener('change', e => {
+        if (e.target.checked) state.filters.sources.add(s);
+        else state.filters.sources.delete(s);
+        updateAgencyToggleLabel();
+        render();
+      });
+      optionsWrap.appendChild(row);
     });
+  }
+
+  function updateAgencyToggleLabel() {
+    const n = state.filters.sources.size;
+    document.getElementById('agency-toggle').textContent =
+      n === 0 ? 'All agencies' : n === 1 ? [...state.filters.sources][0] : `${n} agencies selected`;
   }
 
   function matchesFilters(listing) {
@@ -518,7 +916,7 @@
       const listingArea = (listing.normalizedArea && listing.normalizedArea.area) || '';
       if (!f.areas.has(listingArea)) return false;
     }
-    if (f.source && listing.source !== f.source) return false;
+    if (f.sources.size > 0 && !f.sources.has(listing.source)) return false;
     if (f.minPrice != null && (!listing.price || listing.price < f.minPrice)) return false;
     if (f.maxPrice != null && listing.price && listing.price > f.maxPrice) return false;
     if (f.bedrooms != null && (!listing.bedrooms || listing.bedrooms < f.bedrooms)) return false;
@@ -564,6 +962,17 @@
     return '<span class="unknown">Not mentioned</span>';
   }
 
+  function formatScrapedAt(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '—';
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    return sameDay
+      ? `Today ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+      : d.toLocaleDateString([], { day: 'numeric', month: 'short' });
+  }
+
   function render() {
     const filtered = sortListings(state.listings.filter(matchesFilters));
     document.getElementById('result-count').textContent = `${filtered.length} listing${filtered.length === 1 ? '' : 's'}`;
@@ -575,10 +984,11 @@
     if (filtered.length === 0) {
       table.style.display = 'none';
       empty.style.display = 'block';
+      if (state.view === 'map') renderMap(filtered);
       return;
     }
     empty.style.display = 'none';
-    table.style.display = 'table';
+    table.style.display = state.view === 'table' ? 'table' : 'none';
 
     body.innerHTML = filtered.map(l => `
       <tr>
@@ -591,20 +1001,133 @@
         <td>${badgeYesNo(l.elevator)}</td>
         <td>${badgeYesNo(l.furnished)}</td>
         <td>${badgeYesNo(l.balcony)}</td>
+        <td>${formatScrapedAt(l.scrapedAt)}</td>
         <td>${l.url ? `<a class="listing-link" href="${l.url}" target="_blank" rel="noopener">View →</a>` : ''}</td>
       </tr>
     `).join('');
+
+    if (state.view === 'map') renderMap(filtered);
+  }
+
+  // ---- Map view --------------------------------------------------------
+  let leafletMap = null;
+  let mapMarkers = [];
+
+  function ensureMapInitialized() {
+    if (leafletMap) return;
+    leafletMap = L.map('leaflet-map').setView([48.8566, 2.3200], 12);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(leafletMap);
+  }
+
+  function renderMap(filtered) {
+    ensureMapInitialized();
+    mapMarkers.forEach(m => leafletMap.removeLayer(m));
+    mapMarkers = [];
+
+    // Group by area, computing count + price range for each.
+    const byArea = {};
+    filtered.forEach(l => {
+      const area = (l.normalizedArea && l.normalizedArea.area) || null;
+      if (!area) return;
+      if (!byArea[area]) byArea[area] = { count: 0, prices: [] };
+      byArea[area].count++;
+      if (typeof l.price === 'number' && l.price > 0) byArea[area].prices.push(l.price);
+    });
+
+    const counts = Object.values(byArea).map(a => a.count);
+    const maxCount = counts.length ? Math.max(...counts) : 1;
+
+    Object.entries(byArea).forEach(([area, info]) => {
+      const coords = AREA_COORDS[area];
+      if (!coords) return; // area we don't have a centroid for — skip rather than guess a position
+
+      // Size scales with count (relative to the largest area in the
+      // current filtered set), bounded so it stays legible at both ends.
+      const size = Math.round(28 + (info.count / maxCount) * 34);
+      const icon = L.divIcon({
+        className: '',
+        html: `<div class="map-bubble" style="width:${size}px;height:${size}px;font-size:${Math.max(11, size * 0.34)}px;">${info.count}</div>`,
+        iconSize: [size, size]
+      });
+
+      const priceLine = info.prices.length
+        ? `€${Math.min(...info.prices).toLocaleString()} – €${Math.max(...info.prices).toLocaleString()}`
+        : 'Price on request';
+
+      const marker = L.marker(coords, { icon }).addTo(leafletMap);
+      marker.bindPopup(`
+        <div class="map-popup-title">${area}</div>
+        <p class="map-popup-line">${info.count} listing${info.count === 1 ? '' : 's'}</p>
+        <p class="map-popup-line">${priceLine}</p>
+      `);
+      marker.on('click', () => {
+        // Reuse the existing area-filter system: clicking a bubble
+        // filters the table to just that area, same as clicking its
+        // arrondissement/suburb chip would.
+        state.filters.areas.clear();
+        document.querySelectorAll('.arr-chip.active, .suburb-chip.active').forEach(c => c.classList.remove('active'));
+        state.filters.areas.add(area);
+        document.querySelectorAll('.arr-chip, .suburb-chip').forEach(c => {
+          if (c.textContent.trim() === area || (area.startsWith('Paris') && c.dataset.arr && `Paris ${c.dataset.arr}${c.dataset.arr === '1' ? 'er' : 'e'}` === area)) {
+            c.classList.add('active');
+          }
+        });
+        render();
+      });
+      mapMarkers.push(marker);
+    });
+  }
+
+  function setView(view) {
+    state.view = view;
+    document.getElementById('view-table-btn').classList.toggle('active', view === 'table');
+    document.getElementById('view-map-btn').classList.toggle('active', view === 'map');
+    document.getElementById('map-container').classList.toggle('active', view === 'map');
+    if (view === 'map') {
+      // Leaflet needs a size recalculation the first time its container
+      // becomes visible, otherwise it renders at zero height.
+      setTimeout(() => { ensureMapInitialized(); leafletMap.invalidateSize(); }, 50);
+    }
+    render();
   }
 
   function wireControls() {
     document.getElementById('search-input').addEventListener('input', e => { state.filters.search = e.target.value; render(); });
-    document.getElementById('source-select').addEventListener('change', e => { state.filters.source = e.target.value; render(); });
     document.getElementById('min-price').addEventListener('input', e => { state.filters.minPrice = e.target.value ? Number(e.target.value) : null; render(); });
     document.getElementById('max-price').addEventListener('input', e => { state.filters.maxPrice = e.target.value ? Number(e.target.value) : null; render(); });
     document.getElementById('rooms-select').addEventListener('change', e => { state.filters.bedrooms = e.target.value ? Number(e.target.value) : null; render(); });
     document.getElementById('bathrooms-select').addEventListener('change', e => { state.filters.bathrooms = e.target.value ? Number(e.target.value) : null; render(); });
     document.getElementById('min-sqm').addEventListener('input', e => { state.filters.minSqm = e.target.value ? Number(e.target.value) : null; render(); });
     document.getElementById('max-sqm').addEventListener('input', e => { state.filters.maxSqm = e.target.value ? Number(e.target.value) : null; render(); });
+
+    // Agency multi-select dropdown
+    const agencyToggle = document.getElementById('agency-toggle');
+    const agencyPanel = document.getElementById('agency-panel');
+    agencyToggle.addEventListener('click', () => agencyPanel.classList.toggle('open'));
+    document.addEventListener('click', e => {
+      if (!e.target.closest('.multiselect')) agencyPanel.classList.remove('open');
+    });
+    document.getElementById('agency-select-all').addEventListener('click', () => {
+      document.querySelectorAll('#agency-options input[type="checkbox"]').forEach(cb => {
+        cb.checked = true;
+        state.filters.sources.add(cb.value);
+      });
+      updateAgencyToggleLabel();
+      render();
+    });
+    document.getElementById('agency-clear').addEventListener('click', () => {
+      document.querySelectorAll('#agency-options input[type="checkbox"]').forEach(cb => { cb.checked = false; });
+      state.filters.sources.clear();
+      updateAgencyToggleLabel();
+      render();
+    });
+
+    // Table / Map view toggle
+    document.getElementById('view-table-btn').addEventListener('click', () => setView('table'));
+    document.getElementById('view-map-btn').addEventListener('click', () => setView('map'));
 
     document.querySelectorAll('.toggle-btn').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -676,11 +1199,201 @@
     saleBtn.addEventListener('click', () => setType('sale'));
   }
 
+  // ---- Profiles ----------------------------------------------------
+  // Saved entirely in this browser's localStorage — there's no backend
+  // to this site (it's static GitHub Pages), so profiles don't sync
+  // across devices or browsers. Each profile snapshots the filter
+  // panel's price/room/sqm fields plus whatever areas and agencies were
+  // selected at save time.
+  const PROFILES_KEY = 'yfip_profiles_v1';
+
+  function loadProfiles() {
+    try {
+      return JSON.parse(localStorage.getItem(PROFILES_KEY) || '[]');
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function saveProfiles(profiles) {
+    localStorage.setItem(PROFILES_KEY, JSON.stringify(profiles));
+  }
+
+  function currentFiltersSnapshot() {
+    return {
+      areas: [...state.filters.areas],
+      sources: [...state.filters.sources],
+      minPrice: state.filters.minPrice,
+      maxPrice: state.filters.maxPrice,
+      bedrooms: state.filters.bedrooms,
+      bathrooms: state.filters.bathrooms,
+      minSqm: state.filters.minSqm,
+      maxSqm: state.filters.maxSqm
+    };
+  }
+
+  function applyFilterSnapshot(snap) {
+    state.filters.areas = new Set(snap.areas || []);
+    state.filters.sources = new Set(snap.sources || []);
+    state.filters.minPrice = snap.minPrice ?? null;
+    state.filters.maxPrice = snap.maxPrice ?? null;
+    state.filters.bedrooms = snap.bedrooms ?? null;
+    state.filters.bathrooms = snap.bathrooms ?? null;
+    state.filters.minSqm = snap.minSqm ?? null;
+    state.filters.maxSqm = snap.maxSqm ?? null;
+
+    // Reflect the snapshot back into the actual form controls, since
+    // render() only reads from state — the inputs themselves need
+    // updating separately or they'll look stale even though filtering
+    // is correct underneath.
+    document.getElementById('min-price').value = state.filters.minPrice ?? '';
+    document.getElementById('max-price').value = state.filters.maxPrice ?? '';
+    document.getElementById('rooms-select').value = state.filters.bedrooms ?? '';
+    document.getElementById('bathrooms-select').value = state.filters.bathrooms ?? '';
+    document.getElementById('min-sqm').value = state.filters.minSqm ?? '';
+    document.getElementById('max-sqm').value = state.filters.maxSqm ?? '';
+
+    document.querySelectorAll('.arr-chip, .suburb-chip').forEach(chip => {
+      const label = chip.dataset.arr ? (chip.dataset.arr === '1' ? 'Paris 1er' : `Paris ${chip.dataset.arr}e`) : chip.textContent.trim();
+      chip.classList.toggle('active', state.filters.areas.has(label));
+    });
+    document.querySelectorAll('#agency-options input[type="checkbox"]').forEach(cb => {
+      cb.checked = state.filters.sources.has(cb.value);
+    });
+    updateAgencyToggleLabel();
+  }
+
+  function renderProfileChips() {
+    const profiles = loadProfiles();
+    const row = document.getElementById('profile-row');
+    // Keep the "+ New profile" button, rebuild everything before it.
+    row.querySelectorAll('.profile-chip').forEach(el => el.remove());
+    const addBtn = document.getElementById('add-profile-btn');
+
+    profiles.forEach(p => {
+      const chip = document.createElement('div');
+      chip.className = 'profile-chip' + (state.activeProfileId === p.id ? ' active' : '');
+      chip.innerHTML = `<span class="profile-name-text">${p.name}</span><button title="Delete profile" data-id="${p.id}">×</button>`;
+      chip.querySelector('.profile-name-text').addEventListener('click', () => {
+        if (state.activeProfileId === p.id) {
+          // Clicking the already-active profile again deselects it.
+          state.activeProfileId = null;
+          document.getElementById('profile-hint').style.display = 'none';
+        } else {
+          state.activeProfileId = p.id;
+          applyFilterSnapshot(p.filters);
+          document.getElementById('profile-hint').style.display = 'block';
+        }
+        renderProfileChips();
+        render();
+      });
+      chip.querySelector('button').addEventListener('click', e => {
+        e.stopPropagation();
+        if (!confirm(`Delete profile "${p.name}"?`)) return;
+        const remaining = loadProfiles().filter(x => x.id !== p.id);
+        saveProfiles(remaining);
+        if (state.activeProfileId === p.id) state.activeProfileId = null;
+        renderProfileChips();
+      });
+      row.insertBefore(chip, addBtn);
+    });
+  }
+
+  function wireProfileModal() {
+    const modal = document.getElementById('profile-modal');
+    document.getElementById('add-profile-btn').addEventListener('click', () => {
+      document.getElementById('profile-modal-title').textContent = 'New profile';
+      document.getElementById('profile-name-input').value = '';
+      document.getElementById('profile-min-price').value = state.filters.minPrice ?? '';
+      document.getElementById('profile-max-price').value = state.filters.maxPrice ?? '';
+      document.getElementById('profile-bedrooms').value = state.filters.bedrooms ?? '';
+      document.getElementById('profile-bathrooms').value = state.filters.bathrooms ?? '';
+      document.getElementById('profile-min-sqm').value = state.filters.minSqm ?? '';
+      document.getElementById('profile-max-sqm').value = state.filters.maxSqm ?? '';
+      modal.classList.add('open');
+    });
+    document.getElementById('profile-cancel-btn').addEventListener('click', () => modal.classList.remove('open'));
+    document.getElementById('profile-save-btn').addEventListener('click', () => {
+      const name = document.getElementById('profile-name-input').value.trim();
+      if (!name) { alert('Give this profile a name.'); return; }
+
+      const num = id => { const v = document.getElementById(id).value; return v ? Number(v) : null; };
+      state.filters.minPrice = num('profile-min-price');
+      state.filters.maxPrice = num('profile-max-price');
+      state.filters.bedrooms = num('profile-bedrooms');
+      state.filters.bathrooms = num('profile-bathrooms');
+      state.filters.minSqm = num('profile-min-sqm');
+      state.filters.maxSqm = num('profile-max-sqm');
+      applyFilterSnapshot(currentFiltersSnapshot()); // sync form fields to match
+
+      const profiles = loadProfiles();
+      const newProfile = { id: 'p' + Date.now(), name, filters: currentFiltersSnapshot() };
+      profiles.push(newProfile);
+      saveProfiles(profiles);
+      state.activeProfileId = newProfile.id;
+      modal.classList.remove('open');
+      renderProfileChips();
+      document.getElementById('profile-hint').style.display = 'block';
+      render();
+    });
+
+    document.getElementById('update-profile-btn').addEventListener('click', () => {
+      if (!state.activeProfileId) return;
+      const profiles = loadProfiles();
+      const p = profiles.find(x => x.id === state.activeProfileId);
+      if (!p) return;
+      p.filters = currentFiltersSnapshot();
+      saveProfiles(profiles);
+      alert(`Saved current filters to "${p.name}".`);
+    });
+  }
+
+  // ---- Password gate -------------------------------------------------
+  // See the CSS comment above #password-gate for the honesty caveat:
+  // this is a basic deterrent, not real security, since the check runs
+  // in this public file. CHANGE THIS VALUE before relying on it.
+  const PASSWORD_GATE_VALUE = 'changeme';
+  const PASSWORD_UNLOCK_KEY = 'yfip_unlocked_v1';
+
+  function wirePasswordGate() {
+    const gate = document.getElementById('password-gate');
+    const content = document.getElementById('page-content');
+    const input = document.getElementById('password-input');
+    const error = document.getElementById('password-error');
+
+    function unlock() {
+      localStorage.setItem(PASSWORD_UNLOCK_KEY, 'true');
+      gate.style.display = 'none';
+      content.style.display = 'block';
+    }
+
+    if (localStorage.getItem(PASSWORD_UNLOCK_KEY) === 'true') {
+      unlock();
+      return;
+    }
+
+    function attempt() {
+      if (input.value === PASSWORD_GATE_VALUE) {
+        unlock();
+      } else {
+        error.style.display = 'block';
+        input.value = '';
+        input.focus();
+      }
+    }
+    document.getElementById('password-submit').addEventListener('click', attempt);
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') attempt(); });
+    input.focus();
+  }
+
   async function init() {
+    wirePasswordGate();
     buildSpiral();
     buildSuburbChips();
     wireControls();
     wireTypeToggle();
+    wireProfileModal();
+    renderProfileChips();
     await loadListings();
   }
 
