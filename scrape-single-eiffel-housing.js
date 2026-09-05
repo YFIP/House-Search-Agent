@@ -30,6 +30,11 @@ async function main() {
   console.log(`[Eiffel Housing] Done in ${elapsed}s: ${result.listings.length} listings${result.error ? ', ERROR: ' + result.error : ''}`);
 
   const filename = searchType === 'sale' ? 'output-eiffel-housing-sale.json' : 'output-eiffel-housing.json';
+  // NEW (2026-09-03): stamp when this isolated job's scrape actually
+  // completed onto every listing — powers the frontend's per-listing
+  // "Pulled" column.
+  const scrapedAt = new Date().toISOString();
+  result.listings.forEach(l => { l.scrapedAt = scrapedAt; });
   fs.writeFileSync(filename, JSON.stringify(result, null, 2));
   console.log(`[Eiffel Housing] Wrote ${filename}`);
 }
