@@ -127,6 +127,13 @@ async function runSource(label, promiseFactory, results, sourceStatus) {
   }
 
   if (lastResult && !lastResult.error) {
+    // NEW (2026-09-03): stamp every listing with when THIS specific
+    // source's scrape actually completed, not just a single batch-wide
+    // timestamp. Different sources in the same run can finish minutes
+    // (or, for isolated jobs, over an hour) apart, and this is what
+    // powers the frontend's per-listing "Pulled" column.
+    const scrapedAt = new Date().toISOString();
+    lastResult.listings.forEach(l => { l.scrapedAt = scrapedAt; });
     results.push(...lastResult.listings);
     sourceStatus.push({ source: label, found: lastResult.listings.length, error: null, attempts: attemptsUsed });
   } else {
