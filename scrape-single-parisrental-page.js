@@ -36,6 +36,11 @@ async function main() {
 
   console.log(`[ParisRental-${category}-${pageNum}] Done in ${elapsed}s: ${result.listings.length} listings${result.error ? ', ERROR: ' + result.error : ''}`);
 
+  // NEW (2026-09-03): stamp when this isolated job's scrape actually
+  // completed onto every listing — powers the frontend's per-listing
+  // "Pulled" column.
+  const scrapedAt = new Date().toISOString();
+  result.listings.forEach(l => { l.scrapedAt = scrapedAt; });
   const filename = `output-parisrental-${category}-${pageNum}.json`;
   fs.writeFileSync(filename, JSON.stringify(result, null, 2));
   console.log(`[ParisRental-${category}-${pageNum}] Wrote ${filename}`);
