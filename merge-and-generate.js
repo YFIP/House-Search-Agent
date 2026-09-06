@@ -203,6 +203,29 @@ async function main() {
     allSourceStatus.push({ source: 'Orpi', found: 0, error: 'Isolated job artifact not found' });
   }
 
+  // NEW — Belles Demeures moved to its own isolated job (see
+  // scrape-single-belles-demeures.js). Same pattern as Orpi above.
+  const bellesDemeuresFilename = searchType === 'sale' ? 'output-belles-demeures-sale.json' : 'output-belles-demeures.json';
+  const bellesDemeuresPath = path.join(artifactsDir, bellesDemeuresFilename);
+  const bellesDemeuresResult = fs.existsSync(bellesDemeuresPath) ? loadJson(bellesDemeuresPath) : null;
+  console.log(`Belles Demeures result file: ${fs.existsSync(bellesDemeuresPath) ? bellesDemeuresFilename : '(not found)'}`);
+  if (bellesDemeuresResult) {
+    if (bellesDemeuresResult.error) {
+      allSourceStatus.push({ source: 'Belles Demeures', found: 0, error: bellesDemeuresResult.error });
+    } else {
+      let added = 0;
+      for (const listing of bellesDemeuresResult.listings) {
+        if (seenUrls.has(listing.url)) continue;
+        seenUrls.add(listing.url);
+        allListings.push(listing);
+        added++;
+      }
+      allSourceStatus.push({ source: 'Belles Demeures', found: added, error: null });
+    }
+  } else {
+    allSourceStatus.push({ source: 'Belles Demeures', found: 0, error: 'Isolated job artifact not found' });
+  }
+
   for (const file of parisRentalFiles) {
     const result = loadJson(path.join(artifactsDir, file));
     const label = `ParisRental-${result.category}`;
