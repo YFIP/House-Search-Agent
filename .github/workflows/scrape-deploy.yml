@@ -398,6 +398,54 @@ jobs:
           path: output-orpi-sale.json
           retention-days: 1
 
+  # NEW (2026-09-05): Belles Demeures — confirmed live 238 listings in
+  # just the 16th arrondissement alone, so likely thousands across all
+  # 20 — same order of magnitude that made SeLoger's removal necessary
+  # earlier in this project. Isolated job, generous timeout, real
+  # per-arrondissement page cap (belles-demeures-scraper.js) rather than
+  # unbounded — deliberately not trying to reproduce that problem.
+  scrape-belles-demeures:
+    needs: check-schedule
+    if: needs.check-schedule.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth
+      - name: Scrape Belles Demeures rent in isolation
+        run: node scrape-single-belles-demeures.js rent
+      - name: Upload result
+        uses: actions/upload-artifact@v4
+        with:
+          name: output-belles-demeures
+          path: output-belles-demeures.json
+          retention-days: 1
+
+  scrape-belles-demeures-sale:
+    needs: check-schedule
+    if: needs.check-schedule.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth
+      - name: Scrape Belles Demeures sale in isolation
+        run: node scrape-single-belles-demeures.js sale
+      - name: Upload sale result
+        uses: actions/upload-artifact@v4
+        with:
+          name: output-belles-demeures-sale
+          path: output-belles-demeures-sale.json
+          retention-days: 1
+
   # Downloads every artifact from all jobs above, merges everything, and
   # writes/commits the final Excel file.
   #
@@ -408,7 +456,7 @@ jobs:
   # finish (or fail) before assembling the final output — same as every
   # other isolated source below.
   merge-and-commit:
-    needs: [check-schedule, scrape-main, scrape-main-sale, scrape-barnes, scrape-barnes-sale, scrape-orpi, scrape-orpi-sale, scrape-parisrental-page, scrape-parisrental-sale, scrape-danielfeau, scrape-danielfeau-sale, scrape-eiffel-housing, scrape-eiffel-housing-sale, scrape-junot, scrape-junot-sale]
+    needs: [check-schedule, scrape-main, scrape-main-sale, scrape-barnes, scrape-barnes-sale, scrape-orpi, scrape-orpi-sale, scrape-belles-demeures, scrape-belles-demeures-sale, scrape-parisrental-page, scrape-parisrental-sale, scrape-danielfeau, scrape-danielfeau-sale, scrape-eiffel-housing, scrape-eiffel-housing-sale, scrape-junot, scrape-junot-sale]
     if: needs.check-schedule.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 8
