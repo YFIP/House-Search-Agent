@@ -22,11 +22,12 @@ const { combineAllSources } = require('./combine-sources');
 async function main() {
   const searchType = process.argv[2] === 'sale' ? 'sale' : 'rent';
   const fetchDetails = process.argv[3] === 'details';
-  console.log(`Scraping main sources for ${searchType}${fetchDetails ? ' (with detail enrichment)' : ''} (Barnes, Orpi, ParisRental, DanielFeau, Eiffel Housing, and Junot excluded — run separately)...`);
+  console.log(`Scraping main sources for ${searchType}${fetchDetails ? ' (with detail enrichment)' : ''} (Barnes, Orpi, Belles Demeures, ParisRental, DanielFeau, Eiffel Housing, and Junot excluded — run separately)...`);
   const data = await combineAllSources(searchType, {
     fetchDetails,
     excludeBarnes: true, // NEW — now runs in its own isolated job
     excludeOrpi: true, // NEW — now runs in its own isolated job
+    excludeBellesDemeures: true, // NEW — runs in its own isolated job
     excludeParisRental: true,
     excludeDanielFeau: true,
     excludeEiffelHousing: true,
