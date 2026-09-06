@@ -34,6 +34,7 @@ const { scrapeParisRental } = require('./parisrental-scraper');
 const { scrapeDanielFeau } = require('./danielfeau-scraper');
 const { scrapeEiffelHousing } = require('./eiffel-housing-scraper');
 const { scrapeOrpi } = require('./orpi-scraper');
+const { scrapeBellesDemeures } = require('./belles-demeures-scraper');
 const { scrapeParisSeineImmobilier } = require('./paris-seine-immobilier-scraper');
 const { scrapePatrimoineOuestParisien } = require('./patrimoine-ouest-parisien-scraper');
 const { scrapeAFRImmobilier } = require('./afr-immobilier-scraper');
@@ -147,6 +148,7 @@ async function combineAllSources(searchType = 'rent', options = {}) {
     fetchDetails = false,
     excludeBarnes = false, // NEW
     excludeOrpi = false, // NEW
+    excludeBellesDemeures = false, // NEW
     excludeParisRental = false,
     excludeDanielFeau = false,
     excludeEiffelHousing = false,
@@ -205,6 +207,11 @@ async function combineAllSources(searchType = 'rent', options = {}) {
   // shared budget. See scrape-single-orpi.js.
   if (!excludeOrpi) {
     await runSource('Orpi', () => scrapeOrpi(searchType), results, sourceStatus);
+  }
+  // Belles Demeures: own isolated job (like Barnes/Orpi) given expected
+  // large volume — see scrape-single-belles-demeures.js.
+  if (!excludeBellesDemeures) {
+    await runSource('Belles Demeures', () => scrapeBellesDemeures(searchType), results, sourceStatus);
   }
   if (!excludeParisRental) {
     await runSource('ParisRental', () => scrapeParisRental(searchType), results, sourceStatus);
