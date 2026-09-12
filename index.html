@@ -101,7 +101,7 @@
     padding: 1.75rem 2rem 4rem;
   }
 
-  /* ---- Area selector: the escargot spiral ------------------------- */
+  /* ---- Area selector: real map of Paris + suburbs ------------------- */
   .area-panel {
     background: var(--white);
     border: 1px solid var(--stone-deep);
@@ -121,81 +121,6 @@
     font-size: 0.82rem;
     color: #6B6459;
     margin: 0 0 1.1rem;
-  }
-
-  .spiral-wrap {
-    position: relative;
-    width: 100%;
-    max-width: 420px;
-    aspect-ratio: 1;
-    margin: 0 auto 1rem;
-  }
-
-  .arr-chip {
-    position: absolute;
-    width: 34px;
-    height: 34px;
-    border-radius: 50%;
-    border: 1.5px solid var(--green);
-    background: var(--white);
-    color: var(--green);
-    font-family: 'Fraunces', serif;
-    font-weight: 600;
-    font-size: 0.82rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    transform: translate(-50%, -50%);
-    transition: transform 0.15s ease, background 0.15s ease, color 0.15s ease;
-  }
-
-  .arr-chip:hover { transform: translate(-50%, -50%) scale(1.12); }
-
-  .arr-chip.active {
-    background: var(--rust);
-    border-color: var(--rust);
-    color: var(--white);
-  }
-
-  .spiral-wrap::before {
-    content: 'ARR.';
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    font-size: 0.6rem;
-    letter-spacing: 0.1em;
-    color: #B7AE9C;
-    font-weight: 600;
-  }
-
-  .suburb-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    justify-content: center;
-  }
-
-  .suburb-chip {
-    border: 1.5px solid var(--brass);
-    background: var(--white);
-    color: var(--green-deep);
-    font-family: 'Inter', sans-serif;
-    font-size: 0.78rem;
-    font-weight: 600;
-    padding: 0.35rem 0.75rem;
-    border-radius: 999px;
-    cursor: pointer;
-    transition: background 0.15s ease, color 0.15s ease;
-  }
-
-  .suburb-chip:hover { background: var(--brass-light); }
-
-  .suburb-chip.active {
-    background: var(--rust);
-    border-color: var(--rust);
-    color: var(--white);
   }
 
   .clear-area {
@@ -264,7 +189,7 @@
     margin-bottom: 0.75rem;
   }
 
-  table { width: 100%; border-collapse: collapse; background: var(--white); }
+  table { width: 100%; max-width: 1080px; margin: 0 auto; border-collapse: collapse; background: var(--white); }
   thead th {
     text-align: left;
     font-size: 0.72rem;
@@ -531,33 +456,16 @@
   .multiselect-option input { margin: 0; }
   .multiselect-option label { cursor: pointer; flex: 1; }
 
-  /* ---- View toggle (Table / Map) --------------------------------------- */
-  .view-toggle { display: flex; gap: 0.4rem; margin-bottom: 1rem; }
-  .view-toggle-btn {
-    font-size: 0.82rem;
-    font-weight: 600;
-    padding: 0.45rem 1rem;
-    border: 1px solid var(--stone-deep);
-    background: var(--white);
-    color: var(--ink);
-    border-radius: 3px;
-    cursor: pointer;
-  }
-  .view-toggle-btn.active { background: var(--green); color: var(--white); border-color: var(--green); }
-
-  /* ---- Map view -------------------------------------------------------
+  /* ---- Map (the "Where in Paris?" area selector) -----------------------
      A real (roughly-projected) map of the 20 Paris arrondissements plus
      the suburb towns we track, built from actual open boundary data
-     (IGN/INSEE via gregoiredavid/france-geojson) rather than an
-     abstract layout — arrondissement shapes are the real municipal
-     boundaries; suburbs (no boundary data available) are shown as
-     circles at their real town-center coordinates, using the same
-     projection so everything lines up on one map. Click any
-     arrondissement or suburb to filter — click several to select more
-     than one, same as the chips above (they're the same underlying
-     filter). */
-  #map-container { display: none; }
-  #map-container.active { display: block; }
+     (IGN/INSEE via gregoiredavid/france-geojson) — arrondissement and
+     suburb shapes are the real municipal boundaries, projected together
+     so everything lines up correctly. Click any arrondissement or
+     suburb to filter — click several to select more than one. This is
+     the primary area selector (replaces an earlier abstract spiral
+     layout) and also doubles as a live visualization: color/number show
+     matching-listing counts as filters change. */
   .spiral-map-wrap {
     width: 100%;
     max-width: 640px;
@@ -667,9 +575,8 @@
 <main>
   <div class="area-panel">
     <h2>Where in Paris?</h2>
-    <p class="sub">Click any number of arrondissements or suburbs below to select several at once — they're arranged the way Paris itself spirals outward from the 1st, like a snail shell.</p>
-    <div class="spiral-wrap" id="spiral"></div>
-    <div class="suburb-chips" id="suburb-chips"></div>
+    <p class="sub">Click any arrondissement or suburb below to filter — click several to select more than one. Color and number show how many matching listings are there right now.</p>
+    <div class="spiral-map-wrap" id="spiral-map"></div>
     <button class="clear-area" id="clear-area">Clear area filter</button>
   </div>
 
@@ -747,16 +654,7 @@
   </div>
 
   <div id="result-count"></div>
-  <div class="view-toggle">
-    <button class="view-toggle-btn active" id="view-table-btn">Table</button>
-    <button class="view-toggle-btn" id="view-map-btn">Map</button>
-  </div>
   <div id="loading">Loading listings…</div>
-
-  <div id="map-container">
-    <div class="spiral-map-wrap" id="spiral-map"></div>
-    <p class="map-hint">A rough map of Paris's 20 arrondissements and the suburb towns we track, using real municipal boundaries. Color and number show matching listings. Click any arrondissement or suburb to filter — click more to select several at once.</p>
-  </div>
 
   <table id="results-table" style="display:none">
     <thead>
@@ -856,22 +754,10 @@
   const state = {
     listings: [],
     listingType: 'rent',
-    view: 'table',
     activeProfileId: null,
     filters: { areas: new Set(), sources: new Set(), minPrice: null, maxPrice: null, bedrooms: null, bathrooms: null, minSqm: null, maxSqm: null, elevator: false, furnished: false, balcony: false, search: '' },
     sort: { key: 'price', dir: 'asc' }
   };
-
-  // Rough escargot-spiral coordinates (percent of container), evoking
-  // the real shape Paris arrondissements form spiraling out from the 1st
-  // — not geographically precise, but recognizably the same silhouette.
-  // Used ONLY for the "Where in Paris?" selector above; the Map view
-  // (below) uses real boundary data instead — see ARR_PATHS.
-  const SPIRAL_POSITIONS = [
-    [50, 50], [58, 44], [58, 56], [50, 62], [42, 58], [38, 50], [42, 42],
-    [50, 34], [60, 32], [68, 38], [72, 48], [70, 60], [62, 68], [50, 72],
-    [38, 68], [28, 60], [26, 48], [30, 36], [40, 26], [54, 22]
-  ];
 
   // ---- Real map data ----------------------------------------------------
   // Actual arrondissement AND suburb boundaries (IGN/INSEE via
@@ -954,50 +840,17 @@
   };
 
 
-  function buildSpiral() {
-    const wrap = document.getElementById('spiral');
-    for (let i = 1; i <= ARR_COUNT; i++) {
-      const [x, y] = SPIRAL_POSITIONS[i - 1];
-      const chip = document.createElement('div');
-      chip.className = 'arr-chip';
-      chip.style.left = x + '%';
-      chip.style.top = y + '%';
-      chip.textContent = i === 1 ? '1er' : i;
-      chip.dataset.arr = i;
-      chip.addEventListener('click', () => {
-        const label = i === 1 ? 'Paris 1er' : `Paris ${i}e`;
-        toggleAreaFilter(label, chip);
-      });
-      wrap.appendChild(chip);
-    }
-  }
-
-  function buildSuburbChips() {
-    const wrap = document.getElementById('suburb-chips');
-    const towns = (window.SUBURB_ALIASES || []).map(s => s.canonical);
-    towns.forEach(name => {
-      const chip = document.createElement('button');
-      chip.className = 'suburb-chip';
-      chip.textContent = name;
-      chip.addEventListener('click', () => toggleAreaFilter(name, chip));
-      wrap.appendChild(chip);
-    });
-  }
-
-  function toggleAreaFilter(area, el) {
+  function toggleAreaFilter(area) {
     if (state.filters.areas.has(area)) {
       state.filters.areas.delete(area);
-      el.classList.remove('active');
     } else {
       state.filters.areas.add(area);
-      el.classList.add('active');
     }
     render();
   }
 
   document.getElementById('clear-area').addEventListener('click', () => {
     state.filters.areas.clear();
-    document.querySelectorAll('.arr-chip.active, .suburb-chip.active').forEach(c => c.classList.remove('active'));
     render();
   });
 
@@ -1092,6 +945,7 @@
   function render() {
     const filtered = sortListings(state.listings.filter(matchesFilters));
     document.getElementById('result-count').textContent = `${filtered.length} listing${filtered.length === 1 ? '' : 's'}`;
+    renderMap(filtered); // the map is always visible now (it's the area selector), independent of results
 
     const table = document.getElementById('results-table');
     const empty = document.getElementById('empty-state');
@@ -1100,11 +954,10 @@
     if (filtered.length === 0) {
       table.style.display = 'none';
       empty.style.display = 'block';
-      if (state.view === 'map') renderMap(filtered);
       return;
     }
     empty.style.display = 'none';
-    table.style.display = state.view === 'table' ? 'table' : 'none';
+    table.style.display = 'table';
 
     body.innerHTML = filtered.map(l => `
       <tr>
@@ -1121,11 +974,9 @@
         <td>${l.url ? `<a class="listing-link" href="${l.url}" target="_blank" rel="noopener">View →</a>` : ''}</td>
       </tr>
     `).join('');
-
-    if (state.view === 'map') renderMap(filtered);
   }
 
-  // ---- Map view (real arrondissement shapes + suburb points) -----------
+  // ---- Map (real arrondissement shapes + suburb boundaries) ------------
   function renderMap(filtered) {
     const wrap = document.getElementById('spiral-map');
     const tooltip = document.getElementById('map-tooltip');
@@ -1156,14 +1007,11 @@
       });
       el.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
       el.addEventListener('click', () => {
-        // Reuse the exact same toggle used by the chips above — clicking
-        // an already-selected area deselects it, clicking others adds
-        // to the selection. Multi-select, matching the chips exactly.
-        toggleAreaFilter(area, el);
-        document.querySelectorAll('.arr-chip, .suburb-chip').forEach(c => {
-          const chipLabel = c.dataset.arr ? (c.dataset.arr === '1' ? 'Paris 1er' : `Paris ${c.dataset.arr}e`) : c.textContent.trim();
-          if (chipLabel === area) c.classList.toggle('active', state.filters.areas.has(area));
-        });
+        // Click toggles this area in/out of the filter — click several
+        // to select more than one. render() re-runs afterward and
+        // rebuilds this whole map, so the new selected/empty state
+        // reflects immediately without any extra syncing needed here.
+        toggleAreaFilter(area);
       });
     }
 
@@ -1256,14 +1104,6 @@
     wrap.appendChild(svg);
   }
 
-  function setView(view) {
-    state.view = view;
-    document.getElementById('view-table-btn').classList.toggle('active', view === 'table');
-    document.getElementById('view-map-btn').classList.toggle('active', view === 'map');
-    document.getElementById('map-container').classList.toggle('active', view === 'map');
-    render();
-  }
-
   function wireControls() {
     document.getElementById('search-input').addEventListener('input', e => { state.filters.search = e.target.value; render(); });
     document.getElementById('min-price').addEventListener('input', e => { state.filters.minPrice = e.target.value ? Number(e.target.value) : null; render(); });
@@ -1294,10 +1134,6 @@
       updateAgencyToggleLabel();
       render();
     });
-
-    // Table / Map view toggle
-    document.getElementById('view-table-btn').addEventListener('click', () => setView('table'));
-    document.getElementById('view-map-btn').addEventListener('click', () => setView('map'));
 
     document.querySelectorAll('.toggle-btn').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -1423,10 +1259,9 @@
     document.getElementById('min-sqm').value = state.filters.minSqm ?? '';
     document.getElementById('max-sqm').value = state.filters.maxSqm ?? '';
 
-    document.querySelectorAll('.arr-chip, .suburb-chip').forEach(chip => {
-      const label = chip.dataset.arr ? (chip.dataset.arr === '1' ? 'Paris 1er' : `Paris ${chip.dataset.arr}e`) : chip.textContent.trim();
-      chip.classList.toggle('active', state.filters.areas.has(label));
-    });
+    // The map re-reads state.filters.areas fresh on every render(), so
+    // no separate syncing is needed here (unlike the old chip UI, which
+    // needed its .active classes toggled manually).
     document.querySelectorAll('#agency-options input[type="checkbox"]').forEach(cb => {
       cb.checked = state.filters.sources.has(cb.value);
     });
@@ -1558,8 +1393,6 @@
 
   async function init() {
     wirePasswordGate();
-    buildSpiral();
-    buildSuburbChips();
     wireControls();
     wireTypeToggle();
     wireProfileModal();
