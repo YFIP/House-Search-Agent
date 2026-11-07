@@ -295,6 +295,28 @@ async function main() {
     allSourceStatus.push({ source: 'Junot', found: 0, error: 'Isolated job artifact not found' });
   }
 
+  // NEW (2026-11-07) — the 13 agencies from the 6 Nov request run as
+  // their own isolated job (scrape-new-agencies.js). Unlike the
+  // single-agency jobs above, this one file carries a status per agency.
+  const newAgenciesFilename = searchType === 'sale' ? 'output-new-agencies-sale.json' : 'output-new-agencies.json';
+  const newAgenciesPath = path.join(artifactsDir, newAgenciesFilename);
+  console.log(`New agencies result file: ${fs.existsSync(newAgenciesPath) ? newAgenciesFilename : '(not found)'}`);
+  if (fs.existsSync(newAgenciesPath)) {
+    const newAgencies = loadJson(newAgenciesPath);
+    const addedBySource = {};
+    for (const listing of newAgencies.listings || []) {
+      if (seenUrls.has(listing.url)) continue;
+      seenUrls.add(listing.url);
+      allListings.push(listing);
+      addedBySource[listing.source] = (addedBySource[listing.source] || 0) + 1;
+    }
+    for (const s of newAgencies.sourceStatus || []) {
+      allSourceStatus.push({ source: s.source, found: s.error ? 0 : (addedBySource[s.source] || 0), error: s.error || null });
+    }
+  } else {
+    allSourceStatus.push({ source: 'New agencies (13)', found: 0, error: 'Isolated job artifact not found' });
+  }
+
   const beforeRoomShareFilter = allListings.length;
   const filteredListings = allListings.filter(l => !l.isRoomShare);
   const roomShareCount = beforeRoomShareFilter - filteredListings.length;
