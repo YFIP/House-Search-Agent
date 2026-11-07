@@ -446,6 +446,60 @@ jobs:
           path: output-belles-demeures-sale.json
           retention-days: 1
 
+  # NEW (2026-11-07): the 13 agencies Anna and Analea sent on 6 Nov run
+  # in their own isolated jobs via the shared self-discovering scraper
+  # (agency-auto-scraper.js / new-agencies-config.js). Kept out of
+  # scrape-main so these unverified sites can't push the 25 existing
+  # sources past that job's timeout. The artifact includes a per-agency
+  # `debug` block — check it after the first runs.
+  scrape-new-agencies:
+    needs: check-schedule
+    if: needs.check-schedule.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    # A failure here must never block the merge for the other 25 sources.
+    continue-on-error: true
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth
+      - name: Scrape new agencies (rent)
+        run: node scrape-new-agencies.js rent
+      - name: Upload result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: output-new-agencies
+          path: output-new-agencies.json
+          retention-days: 7
+
+  scrape-new-agencies-sale:
+    needs: check-schedule
+    if: needs.check-schedule.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    # A failure here must never block the merge for the other 25 sources.
+    continue-on-error: true
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth
+      - name: Scrape new agencies (sale)
+        run: node scrape-new-agencies.js sale
+      - name: Upload sale result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: output-new-agencies-sale
+          path: output-new-agencies-sale.json
+          retention-days: 7
+
   # Downloads every artifact from all jobs above, merges everything, and
   # writes/commits the final Excel file.
   #
@@ -456,7 +510,7 @@ jobs:
   # finish (or fail) before assembling the final output — same as every
   # other isolated source below.
   merge-and-commit:
-    needs: [check-schedule, scrape-main, scrape-main-sale, scrape-barnes, scrape-barnes-sale, scrape-orpi, scrape-orpi-sale, scrape-belles-demeures, scrape-belles-demeures-sale, scrape-parisrental-page, scrape-parisrental-sale, scrape-danielfeau, scrape-danielfeau-sale, scrape-eiffel-housing, scrape-eiffel-housing-sale, scrape-junot, scrape-junot-sale]
+    needs: [check-schedule, scrape-main, scrape-main-sale, scrape-barnes, scrape-barnes-sale, scrape-orpi, scrape-orpi-sale, scrape-belles-demeures, scrape-belles-demeures-sale, scrape-parisrental-page, scrape-parisrental-sale, scrape-danielfeau, scrape-danielfeau-sale, scrape-eiffel-housing, scrape-eiffel-housing-sale, scrape-junot, scrape-junot-sale, scrape-new-agencies, scrape-new-agencies-sale]
     if: needs.check-schedule.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 8
